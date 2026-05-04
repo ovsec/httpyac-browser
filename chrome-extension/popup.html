@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>HTTP Scanner</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <div class="brand">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+        </svg>
+        HTTP Scanner
+      </div>
+      <div class="header-btns">
+        <button id="rescanBtn" class="btn btn-secondary">Re-scan</button>
+        <button id="runAllBtn" class="btn btn-success" disabled>Run All</button>
+      </div>
+    </header>
+
+    <div id="statsBar" class="stats-bar hidden">
+      <span id="statTotal" class="stat"></span>
+      <span id="statOk"    class="stat ok hidden"></span>
+      <span id="statErr"   class="stat err hidden"></span>
+    </div>
+
+    <div id="reqList" class="req-list hidden"></div>
+
+    <div class="section-head" id="varToggle">
+      <span class="chevron" id="varChevron">▶</span>
+      Variables
+      <span id="varBadge" class="badge">0</span>
+    </div>
+    <div id="varBody" class="var-body hidden">
+      <textarea id="varEditor"
+        placeholder="KEY=value&#10;BASE_URL=https://api.example.com&#10;TOKEN=secret"
+        rows="4" spellcheck="false"></textarea>
+      <div class="hint">One <code>KEY=value</code> per line · use <code>{{KEY}}</code> in requests</div>
+    </div>
+
+    <div id="emptyMsg" class="empty">
+      <p>No HTTP requests detected on this page</p>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
