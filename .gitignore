@@ -110,3 +110,5 @@ coverage.lcov
 *.backup
 *.orig
 .git_*
+
+chrome-extension/
