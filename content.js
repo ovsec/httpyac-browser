@@ -274,6 +274,33 @@
     }
   }
 
+  // Cached copy of popup variables — kept in sync via storage listener
+  let cachedVars = {};
+  chrome.storage.local.get('variables', ({ variables }) => { cachedVars = variables ?? {}; });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.variables) cachedVars = changes.variables.newValue ?? {};
+  });
+
+  function hasUnresolvedVars(block) {
+    const merged = { ...cachedVars, ...(block.localVars ?? {}) };
+    const check = s => {
+      if (!s) return false;
+      const re = /\{\{(=?)([\s\S]*?)\}\}/g;
+      let m;
+      while ((m = re.exec(s)) !== null) {
+        const eq = m[1], expr = m[2].trim();
+        if (eq === '=') continue;
+        if (systemVarValue(expr) !== null) continue;
+        if (merged[expr] !== undefined) continue;
+        return true;
+      }
+      return false;
+    };
+    return check(block.url)
+      || Object.values(block.headers ?? {}).some(check)
+      || check(block.body);
+  }
+
   function applyVars(req, vars) {
     // Block-level @var definitions override popup vars
     const merged = { ...vars, ...(req.localVars ?? {}) };
@@ -319,63 +346,67 @@
       pointer-events: none;
     }
 
-    .pill {
+    .pill-wrap {
       position: fixed;
       display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      padding: 4px 10px;
-      background: rgba(13, 17, 23, 0.78);
-      border: 1px solid rgba(48, 54, 61, 0.65);
-      border-radius: 20px;
-      color: rgba(139, 148, 158, 0.85);
+      align-items: stretch;
+      gap: 6px;
+      pointer-events: auto;
+      user-select: none;
+    }
+
+    .pill, .pill-btn {
       font-size: 11px;
       font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
-      cursor: pointer;
-      pointer-events: auto;
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      transition: background 0.18s, border-color 0.18s, color 0.18s, box-shadow 0.18s;
-      user-select: none;
       white-space: nowrap;
       letter-spacing: 0.02em;
     }
-    .pill:hover {
-      background: rgba(22, 27, 34, 0.95);
-      border-color: rgba(88, 166, 255, 0.45);
-      color: #c9d1d9;
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 12px;
+      background: rgba(13, 17, 23, 0.88);
+      border: 1px solid rgba(48, 54, 61, 0.75);
+      border-radius: 20px;
+      color: rgba(139, 148, 158, 0.9);
+      transition: background 0.2s, border-color 0.2s, color 0.2s;
+    }
+    .pill-wrap:hover .pill {
+      background: #21262d;
+      border-color: #8b949e;
+      color: #e6edf3;
     }
 
-    .pill.running {
-      background: rgba(23, 42, 100, 0.55);
-      border-color: rgba(59, 130, 246, 0.75);
-      color: #79b8ff;
-      animation: glow-blue 1.5s ease-in-out infinite;
+    .pill-wrap.running .pill {
+      background: rgba(13, 17, 23, 0.88);
+      border-color: #388bfd;
+      color: #58a6ff;
+      animation: pulse-border 1.8s ease-in-out infinite;
     }
-    .pill.success {
-      background: rgba(18, 68, 40, 0.65);
-      border-color: rgba(63, 185, 80, 0.8);
-      color: #56d364;
-      box-shadow: 0 0 10px rgba(63, 185, 80, 0.15);
+    .pill-wrap.success .pill {
+      background: rgba(13, 17, 23, 0.88);
+      border-color: #2ea043;
+      color: #3fb950;
     }
-    .pill.success:hover {
-      background: rgba(22, 90, 50, 0.8);
-      border-color: #3fb950;
+    .pill-wrap.success:hover .pill { background: #161b22; }
+    .pill-wrap.error .pill {
+      background: rgba(13, 17, 23, 0.88);
+      border-color: #da3633;
+      color: #f85149;
     }
-    .pill.error {
-      background: rgba(100, 22, 22, 0.6);
-      border-color: rgba(248, 81, 73, 0.8);
-      color: #ff7b72;
-      box-shadow: 0 0 10px rgba(248, 81, 73, 0.15);
+    .pill-wrap.error:hover .pill { background: #161b22; }
+    .pill-wrap.warn .pill {
+      background: rgba(13, 17, 23, 0.88);
+      border-color: #9e6a03;
+      color: #d29922;
     }
-    .pill.error:hover {
-      background: rgba(130, 24, 24, 0.8);
-      border-color: #f85149;
-    }
+    .pill-wrap.warn:hover .pill { background: #161b22; }
 
-    @keyframes glow-blue {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(59,130,246,0.35); }
-      50%       { box-shadow: 0 0 12px 2px rgba(59,130,246,0.12); }
+    @keyframes pulse-border {
+      0%, 100% { border-color: #388bfd; }
+      50%       { border-color: #58a6ff; }
     }
 
     .dot {
@@ -383,7 +414,7 @@
       border-radius: 50%;
       background: currentColor;
       flex-shrink: 0;
-      opacity: 0.75;
+      opacity: 0.7;
     }
 
     .icon { display: inline-block; }
@@ -396,11 +427,55 @@
       border-radius: 8px;
       margin-left: 2px;
       font-weight: 600;
-      background: rgba(255,255,255,0.08);
+      background: #21262d;
       letter-spacing: 0;
     }
-    .pill.success .assert-badge.fail { background: rgba(248,81,73,0.25); color: #ff7b72; }
-    .pill.error   .assert-badge      { background: rgba(255,255,255,0.08); }
+    .pill-wrap.success .assert-badge.fail { background: #7f1d1d22; color: #f85149; }
+
+    /* ── action buttons slide-in ── */
+    .pill-actions {
+      display: inline-flex;
+      align-items: stretch;
+      gap: 5px;
+      overflow: hidden;
+      max-width: 0;
+      opacity: 0;
+      /* expand: delay 120ms so accidental passes don't trigger */
+      transition: max-width 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94) 0.12s,
+                  opacity   0.35s ease 0.18s;
+      pointer-events: none;
+    }
+    .pill-wrap:hover .pill-actions {
+      max-width: 200px;
+      opacity: 1;
+      pointer-events: auto;
+      /* collapse faster, no delay */
+      transition: max-width 0.3s cubic-bezier(0.55, 0, 1, 0.45),
+                  opacity   0.2s ease;
+    }
+
+    .pill-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 0 10px;
+      background: rgba(13, 17, 23, 0.88);
+      border: 1px solid #30363d;
+      border-radius: 16px;
+      color: #8b949e;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .pill-btn.btn-run:hover {
+      background: #238636;
+      border-color: #2ea043;
+      color: #fff;
+    }
+    .pill-btn.btn-details:hover {
+      background: #21262d;
+      border-color: #8b949e;
+      color: #e6edf3;
+    }
   `;
 
   // ── Overlay (modal detail) CSS ────────────────────────────────────────────
@@ -760,11 +835,19 @@
             }
           }
 
-          return `<div class="pill ${cls}" data-idx="${i}" style="top:${top}px;right:${right}px"
-                       title="Click: run  ·  Double-click: details">
-            <span class="dot"></span>
-            ${icon}
-            ${label}
+          const warnCls = !r && hasUnresolvedVars(b) ? 'warn' : '';
+          const warnTitle = warnCls ? ' title="Unresolved variables"' : '';
+
+          return `<div class="pill-wrap ${cls} ${warnCls}" data-idx="${i}" style="top:${top}px;right:${right}px">
+            <div class="pill"${warnTitle}>
+              <span class="dot"></span>
+              ${icon}
+              ${label}
+            </div>
+            <div class="pill-actions">
+              <button class="pill-btn btn-run" data-action="run" data-idx="${i}">▶ Run</button>
+              <button class="pill-btn btn-details" data-action="details" data-idx="${i}">↗ Details</button>
+            </div>
           </div>`;
         }).join('')}
       </div>`;
@@ -852,22 +935,12 @@
     requestAnimationFrame(() => entry.render());
     registry.push(entry);
 
-    // Debounce single-click so dblclick can cancel it
-    let clickTimer = null;
-
     entry.shadow.addEventListener('click', e => {
-      const pill = e.target.closest('[data-idx]');
-      if (!pill) return;
-      const idx = parseInt(pill.dataset.idx);
-      clearTimeout(clickTimer);
-      clickTimer = setTimeout(() => runOne(entry, idx), 220);
-    });
-
-    entry.shadow.addEventListener('dblclick', e => {
-      const pill = e.target.closest('[data-idx]');
-      if (!pill) return;
-      clearTimeout(clickTimer);
-      showOverlay(entry, parseInt(pill.dataset.idx));
+      const btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      const idx = parseInt(btn.dataset.idx);
+      if (btn.dataset.action === 'run') runOne(entry, idx);
+      else if (btn.dataset.action === 'details') showOverlay(entry, idx);
     });
   }
 
