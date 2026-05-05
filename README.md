@@ -1,6 +1,23 @@
+<p align="center">
+  <img src="icons/icon-text128.png" alt="httpOwl" width="128">
+</p>
+
 # httpOwl
 
 A Chrome/Edge extension that detects [httpyac](https://httpyac.github.io/)-style HTTP request definitions on any webpage and lets you run them directly in the browser — no CLI, no VS Code, no switching context. httpOwl is the browser companion to httpYac.
+
+---
+
+## Screenshots
+
+**Popup and auto-detected requests on a GitHub file**
+![Popup showing detected requests on GitHub blob view](screenshots/01_screenshot.png)
+
+**Inline run pills anchored to each request block**
+![Inline GET and POST run pills with 200 result badge](screenshots/02_screenshot.png)
+
+**Detail overlay — full request and response**
+![Detail overlay showing request headers and response body](screenshots/03_screenshot.png)
 
 ---
 

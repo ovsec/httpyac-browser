@@ -1,5 +1,5 @@
 (() => {
-  if (window.__httpScanner) { window.__httpScanner.reinject(); return; }
+  if (window.__httpOwl) { window.__httpOwl.reinject(); return; }
 
   // ── Utilities ─────────────────────────────────────────────────────────────
   const esc = s => String(s ?? '')
@@ -586,7 +586,7 @@
 
   function createOverlay() {
     overlayHost = document.createElement('div');
-    overlayHost.setAttribute('data-http-scanner-overlay', '');
+    overlayHost.setAttribute('data-http-owl-overlay', '');
     overlayHost.style.cssText = 'all:initial;';
     document.body.appendChild(overlayHost);
     overlayShadow = overlayHost.attachShadow({ mode: 'open' });
@@ -819,7 +819,7 @@
 
     // Wrapper kept so SCROLL_TO / scrollIntoView still works
     const wrapper = document.createElement('div');
-    wrapper.setAttribute('data-http-scanner-wrapper', '');
+    wrapper.setAttribute('data-http-owl-wrapper', '');
     wrapper.style.cssText = 'position:relative;display:block;';
     el.parentNode.insertBefore(wrapper, el);
     wrapper.appendChild(el);
@@ -827,17 +827,16 @@
 
     // Pill host lives in document.body so position:fixed pills are never clipped
     // by overflow:hidden ancestors (scrollable code containers, Confluence panels, etc.)
-    const pillHost = document.createElement('div');
-    pillHost.setAttribute('data-http-scanner', '');
-    pillHost.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;z-index:2147483646;pointer-events:none;overflow:visible;';
-    document.body.appendChild(pillHost);
-
-    // Measure element-relative Y offset of each request's METHOD URL line.
+    // Measure offsets BEFORE DOM mutation so the layout read doesn't force reflow.
     entry.offsets = precomputedOffsets ?? blocks.map((b, i) => {
       const occurrence = blocks.slice(0, i).filter(p => p.method === b.method && p.url === b.url).length;
       return findBlockTopOffset(el, b, occurrence);
     });
 
+    const pillHost = document.createElement('div');
+    pillHost.setAttribute('data-http-owl', '');
+    pillHost.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;z-index:2147483646;pointer-events:none;overflow:visible;';
+    document.body.appendChild(pillHost);
     entry.shadow = pillHost.attachShadow({ mode: 'open' });
 
     // render() converts element-relative offsets → current viewport Y for fixed pills.
@@ -850,7 +849,7 @@
       renderPills(entry.shadow, entry.blocks, entry.results, tops, right);
     };
 
-    entry.render();
+    requestAnimationFrame(() => entry.render());
     registry.push(entry);
 
     // Debounce single-click so dblclick can cancel it
@@ -892,55 +891,28 @@
     hideOverlay();
 
     // Undo previous wrappers: move original elements back, then remove wrappers
-    document.querySelectorAll('[data-http-scanner-wrapper]').forEach(wrapper => {
+    document.querySelectorAll('[data-http-owl-wrapper]').forEach(wrapper => {
       Array.from(wrapper.childNodes).forEach(child => {
-        if (child.nodeType === 1 && !child.hasAttribute('data-http-scanner')) {
+        if (child.nodeType === 1 && !child.hasAttribute('data-http-owl')) {
           wrapper.parentNode.insertBefore(child, wrapper);
         }
       });
       wrapper.remove();
     });
     // Remove body-level pill hosts (position:fixed overlays)
-    document.querySelectorAll('[data-http-scanner]').forEach(el => el.remove());
-    document.querySelectorAll('[data-http-scanner-done]').forEach(el => {
-      el.removeAttribute('data-http-scanner-done');
+    document.querySelectorAll('[data-http-owl]').forEach(el => el.remove());
+    document.querySelectorAll('[data-http-owl-done]').forEach(el => {
+      el.removeAttribute('data-http-owl-done');
     });
     registry.length = 0;
 
     let count = 0;
 
-    // Strategy 1: code blocks containing inline ### separators
-    document.querySelectorAll('pre, code, textarea').forEach(el => {
-      if (el.tagName === 'CODE' && el.closest('pre')) return;
-      if (el.dataset.httpScannerDone) return;
-      // Skip off-screen hidden textareas (e.g. GitHub's read-only-cursor-text-area)
-      if (el.tagName === 'TEXTAREA' && !el.offsetWidth && !el.offsetHeight) {
-        el.dataset.httpScannerDone = '1'; // mark so MutationObserver doesn't re-trigger
-        return;
-      }
-      const text   = el.value ?? el.textContent ?? '';
-      const blocks = parseText(text);
-      if (!blocks.length) return;
-      el.dataset.httpScannerDone = '1';
-      injectForElement(el, blocks);
-      count += blocks.length;
-    });
+    // ── Phase 1: all layout reads (before any DOM mutations) ──────────────────
 
-    // Strategy 2: Confluence / wiki pages where ### → <h2>/<h3>/<h4> + <pre>
-    document.querySelectorAll('h2, h3, h4').forEach(heading => {
-      const name   = heading.textContent.trim();
-      if (!name) return;
-      const codeEl = findNextCodeEl(heading);
-      if (!codeEl || codeEl.dataset.httpScannerDone) return;
-      const text   = codeEl.value ?? codeEl.textContent ?? '';
-      const block  = parseBlock(text.trim(), name);
-      if (!block) return;
-      codeEl.dataset.httpScannerDone = '1';
-      injectForElement(codeEl, [block]);
-      count++;
-    });
-
-    // Strategy 3: GitHub blob view — content in td.blob-code / td.js-file-line rows
+    // Strategy 3 (GitHub blob): measure cell rects NOW, before injectForElement
+    // mutates the DOM and would force a reflow on these reads.
+    let githubInject = null;
     {
       const codeCells = Array.from(
         document.querySelectorAll(
@@ -949,15 +921,12 @@
       );
       if (codeCells.length) {
         const table = codeCells[0].closest('table');
-        if (table && !table.dataset.httpScannerDone) {
+        if (table && !table.dataset.httpOwlDone) {
           const lines = codeCells.map(td => td.textContent);
           const blocks = parseText(lines.join('\n'));
           if (blocks.length) {
             const tableRect = table.getBoundingClientRect();
-            const lineOffsets = codeCells.map(td => {
-              const r = td.getBoundingClientRect();
-              return r.top - tableRect.top;
-            });
+            const lineOffsets = codeCells.map(td => td.getBoundingClientRect().top - tableRect.top);
             const blockOffsets = blocks.map((block, bi) => {
               const needle = block.method + ' ' + block.url;
               const skip = blocks.slice(0, bi).filter(
@@ -972,12 +941,57 @@
               }
               return 0;
             });
-            table.dataset.httpScannerDone = '1';
-            injectForElement(table, blocks, blockOffsets);
-            count += blocks.length;
+            githubInject = { table, blocks, blockOffsets };
           }
         }
       }
+    }
+
+    // ── Phase 2: all DOM mutations ────────────────────────────────────────────
+
+    // Strategy 1: code blocks containing inline ### separators
+    document.querySelectorAll('pre, code, textarea').forEach(el => {
+      if (el.tagName === 'CODE' && el.closest('pre')) return;
+      if (el.dataset.httpOwlDone) return;
+      // Skip off-screen hidden textareas (e.g. GitHub's read-only-cursor-text-area).
+      // checkVisibility() avoids a forced reflow; offsetWidth fallback for older browsers.
+      if (el.tagName === 'TEXTAREA') {
+        const hidden = el.checkVisibility
+          ? !el.checkVisibility()
+          : (!el.offsetWidth && !el.offsetHeight);
+        if (hidden) {
+          el.dataset.httpOwlDone = '1';
+          return;
+        }
+      }
+      const text   = el.value ?? el.textContent ?? '';
+      const blocks = parseText(text);
+      if (!blocks.length) return;
+      el.dataset.httpOwlDone = '1';
+      injectForElement(el, blocks);
+      count += blocks.length;
+    });
+
+    // Strategy 2: Confluence / wiki pages where ### → <h2>/<h3>/<h4> + <pre>
+    document.querySelectorAll('h2, h3, h4').forEach(heading => {
+      const name   = heading.textContent.trim();
+      if (!name) return;
+      const codeEl = findNextCodeEl(heading);
+      if (!codeEl || codeEl.dataset.httpOwlDone) return;
+      const text   = codeEl.value ?? codeEl.textContent ?? '';
+      const block  = parseBlock(text.trim(), name);
+      if (!block) return;
+      codeEl.dataset.httpOwlDone = '1';
+      injectForElement(codeEl, [block]);
+      count++;
+    });
+
+    // Strategy 3: inject using pre-measured rects from Phase 1
+    if (githubInject) {
+      const { table, blocks, blockOffsets } = githubInject;
+      table.dataset.httpOwlDone = '1';
+      injectForElement(table, blocks, blockOffsets);
+      count += blocks.length;
     }
 
     chrome.runtime.sendMessage({ type: 'SET_ICON', state: 'default' }, () => { chrome.runtime.lastError; });
@@ -1012,7 +1026,7 @@
   }
 
   // ── Public API + messages ─────────────────────────────────────────────────
-  window.__httpScanner = {
+  window.__httpOwl = {
     reinject: injectAll,
     getStats,
     runAll: () => Promise.all(registry.flatMap(e => e.blocks.map((_, i) => runOne(e, i)))),
@@ -1022,7 +1036,7 @@
     if (msg.type === 'SCAN') {
       reply({ count: injectAll() });
     } else if (msg.type === 'RUN_ALL') {
-      window.__httpScanner.runAll().then(() => reply({ ok: true }));
+      window.__httpOwl.runAll().then(() => reply({ ok: true }));
       return true;
     } else if (msg.type === 'RUN_ONE') {
       const item = flatEntry(msg.index);
@@ -1065,7 +1079,7 @@
   });
 
   createOverlay();
-  try { injectAll(); } catch (e) { console.warn('[HTTP Scanner] init scan error', e); }
+  try { injectAll(); } catch (e) { console.warn('[httpOwl] init scan error', e); }
 
   // Re-render fixed pills on scroll/resize so they track their source lines
   {
@@ -1074,7 +1088,23 @@
       if (_raf) return;
       _raf = requestAnimationFrame(() => {
         _raf = null;
-        try { registry.forEach(e => e.render?.()); } catch (_) {}
+        try {
+          // Phase 1: batch all reads (avoids read-write-read thrash per entry)
+          const snapshots = registry.map(e => {
+            if (!e.el?.isConnected) return null;
+            const rect = e.el.getBoundingClientRect();
+            return {
+              tops: e.offsets.map(off => rect.top + off),
+              right: Math.max(8, window.innerWidth - rect.right + 8),
+            };
+          });
+          // Phase 2: batch all writes
+          registry.forEach((e, i) => {
+            const s = snapshots[i];
+            if (!s) return;
+            renderPills(e.shadow, e.blocks, e.results, s.tops, s.right);
+          });
+        } catch (_) {}
       });
     };
     window.addEventListener('scroll', rerender, { capture: true, passive: true });
@@ -1090,10 +1120,10 @@
       _t = setTimeout(() => {
         _t = null;
         if (document.querySelector(
-          'pre:not([data-http-scanner-done]),' +
-          'code:not(pre code):not([data-http-scanner-done]),' +
-          'textarea:not([data-http-scanner-done])'
-        )) { try { injectAll(); } catch (e) { console.warn('[HTTP Scanner] re-scan error', e); } }
+          'pre:not([data-http-owl-done]),' +
+          'code:not(pre code):not([data-http-owl-done]),' +
+          'textarea:not([data-http-owl-done])'
+        )) { try { injectAll(); } catch (e) { console.warn('[httpOwl] re-scan error', e); } }
       }, 600);
     }).observe(document.documentElement, { childList: true, subtree: true });
   }

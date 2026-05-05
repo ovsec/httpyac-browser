@@ -203,7 +203,7 @@ function buildReportHtml(requests) {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>HTTP Scanner Report</title>
+<title>httpOwl Report</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0d1117;color:#e6edf3;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:13px;min-height:100vh}
@@ -245,7 +245,7 @@ pre.code{background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:8
 </style>
 </head>
 <body>
-<div class="rh"><span class="rt">HTTP Scanner Report</span><span class="rts">${esc(ts)}</span></div>
+<div class="rh"><span class="rt">httpOwl Report</span><span class="rts">${esc(ts)}</span></div>
 <div class="sum">
   <span>${total} request${total!==1?'s':''}</span>
   ${ok>0?`<span class="ok">✓ ${ok} passed</span>`:''}
