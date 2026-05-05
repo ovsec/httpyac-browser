@@ -1,6 +1,6 @@
-# httpyac for Browser
+# httpOwl
 
-A Chrome/Edge extension that detects [httpyac](https://httpyac.github.io/)-style HTTP request definitions on any webpage and lets you run them directly in the browser — no CLI, no VS Code, no switching context.
+A Chrome/Edge extension that detects [httpyac](https://httpyac.github.io/)-style HTTP request definitions on any webpage and lets you run them directly in the browser — no CLI, no VS Code, no switching context. httpOwl is the browser companion to httpYac.
 
 ---
 
@@ -121,19 +121,51 @@ The extension is not yet published to the Chrome Web Store. Install it unpacked:
 1. Clone or download this repository
 2. Open `chrome://extensions` (or `edge://extensions`)
 3. Enable **Developer mode** (top-right toggle)
-4. Click **Load unpacked** and select the `chrome-extension` folder
+4. Click **Load unpacked** and select the repository root folder (where `manifest.json` lives)
 5. Navigate to any page containing `.http` request blocks
 
 To update after pulling changes, click the **↺** refresh button on the extension card in `chrome://extensions`.
 
 ---
 
-## Packing for distribution
+## Publishing to Chrome Web Store
+
+1. Go to the [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole/)
+2. Click **New Item**
+3. Upload a ZIP of the repository root (must contain `manifest.json` at the top level)
+4. Fill in the store listing:
+   - **Name:** httpOwl
+   - **Summary:** Detect and run httpyac-style HTTP requests directly from any webpage.
+   - **Description:** Use the full Features section from this README
+   - **Category:** Developer Tools
+   - **Language:** English
+5. Upload at least one screenshot (1280×800 or 640×400) showing the extension in action
+6. Submit for review (typically takes 1-3 business days)
+
+### Required store assets
+
+| Asset | Size | Status |
+|-------|------|--------|
+| Extension icon (128×128) | 128×128 PNG | ✅ `icons/icon128.png` |
+| Small tile icon | 128×128 PNG | ✅ `icons/icon128.png` |
+| Marquee tile | 440×280 PNG | ❌ Create manually |
+| Screenshot | 1280×800 or 640×400 | ❌ Capture manually |
+| Promo tile (optional) | 1400×560 | ❌ Create manually |
+
+To create the ZIP for upload:
+```bash
+# From the repository root
+zip -r httpyac-for-browser.zip *.js *.json *.html *.css icons/
+```
+
+---
+
+## Packing for distribution (`.crx`)
 
 To produce a `.crx` file for manual distribution or sideloading:
 
 1. `chrome://extensions` → **Pack extension**
-2. Select the `chrome-extension` folder as the extension root
+2. Select the repository root folder as the extension root
 3. On first pack, leave the private key field empty — Chrome generates a `.pem` key alongside the `.crx`
 4. Keep the `.pem` file; you need it to pack future updates under the same extension ID
 
@@ -142,13 +174,13 @@ To produce a `.crx` file for manual distribution or sideloading:
 ## Project structure
 
 ```
-chrome-extension/
 ├── manifest.json      # MV3 manifest — permissions, content script, background
 ├── background.js      # Service worker — fetch execution, dynamic icon rendering
 ├── content.js         # Injected into every page — parser, pill UI, overlay, scanner
 ├── popup.html         # Extension popup shell
 ├── popup.js           # Popup logic — stats, request list, variables, report
-└── popup.css          # Popup styles
+├── popup.css          # Popup styles
+└── icons/             # Extension icons (16, 32, 48, 128px)
 ```
 
 ---
@@ -168,3 +200,9 @@ chrome-extension/
 ## License
 
 MIT
+
+---
+
+## Privacy Policy
+
+Read our [Privacy Policy](PRIVACY.md). httpOwl does not collect or transmit any personal data.
