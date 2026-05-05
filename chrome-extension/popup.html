@@ -2,17 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>HTTP Scanner</title>
+  <title>httpyac for Browser</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div id="app">
     <header>
       <div class="brand">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+        <svg width="18" height="18" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="12" fill="#f57c00"/>
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" fill="white"/>
         </svg>
-        HTTP Scanner
+        httpyac for Browser
       </div>
       <div class="header-btns">
         <button id="rescanBtn" class="btn btn-secondary">Re-scan</button>
@@ -24,6 +25,7 @@
       <span id="statTotal" class="stat"></span>
       <span id="statOk"    class="stat ok hidden"></span>
       <span id="statErr"   class="stat err hidden"></span>
+      <button id="reportBtn" class="btn-report hidden">↓ Report</button>
     </div>
 
     <div id="reqList" class="req-list hidden"></div>
@@ -34,10 +36,15 @@
       <span id="varBadge" class="badge">0</span>
     </div>
     <div id="varBody" class="var-body hidden">
+      <div class="env-bar">
+        <select id="envSelect" class="env-select"></select>
+        <button id="envAddBtn" class="env-btn" title="New environment">+</button>
+        <button id="envDelBtn" class="env-btn env-del" title="Delete environment">−</button>
+      </div>
       <textarea id="varEditor"
         placeholder="KEY=value&#10;BASE_URL=https://api.example.com&#10;TOKEN=secret"
         rows="4" spellcheck="false"></textarea>
-      <div class="hint">One <code>KEY=value</code> per line · use <code>{{KEY}}</code> in requests</div>
+      <div class="hint"><code>$shared</code> vars apply to all envs · <code>{{KEY}}</code> in requests</div>
     </div>
 
     <div id="emptyMsg" class="empty">

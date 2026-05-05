@@ -29,17 +29,21 @@
   function parseBlock(text, blockName) {
     const lines = text.split('\n');
     let i = 0, name = blockName;
+    const localVars = {};
     while (i < lines.length) {
       const l = lines[i].trim();
       if (!l) { i++; continue; }
       const nm = l.match(/^#\s*@name\s+(.+)$/i);
       if (nm) { name = nm[1].trim(); i++; continue; }
+      // Inline variable: @var = value  or  @var := value (lazy)
+      const vm = l.match(/^@(\w+)\s*:?=\s*(.*)$/);
+      if (vm) { localVars[vm[1]] = vm[2].trim(); i++; continue; }
       if (l.startsWith('#') || l.startsWith('//')) { i++; continue; }
       break;
     }
     if (i >= lines.length) return null;
     const rm = lines[i].trim().match(
-      /^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|CONNECT|TRACE)\s+(https?:\/\/\S+)(?:\s+HTTP\/[\d.]+)?$/i
+      /^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|CONNECT|TRACE)\s+(https?:\/\/\S+|\/.*|\{\{[^}]+\}\}\S*)(?:\s+HTTP\/[\d.]+)?$/i
     );
     if (!rm) return null;
     const method = rm[1].toUpperCase(), url = rm[2]; i++;
@@ -50,7 +54,6 @@
       i++;
     }
     i++;
-    // Collect body lines and ?? assertion lines (can be interleaved at end)
     const bodyLines = [], assertions = [];
     while (i < lines.length) {
       const l = lines[i].trim();
@@ -58,7 +61,7 @@
       else bodyLines.push(lines[i]);
       i++;
     }
-    return { name, method, url, headers, body: bodyLines.join('\n').trim() || null, assertions };
+    return { name, method, url, headers, body: bodyLines.join('\n').trim() || null, assertions, localVars };
   }
 
   function parseText(text) {
@@ -175,12 +178,130 @@
     });
   }
 
+  // Find the Nth full-token occurrence of needle in text.
+  // Skips substring matches: "GET .../users" inside "GET .../users/1"
+  // by requiring the character after needle to be whitespace or end-of-string.
+  function findNthOccurrence(text, needle, occurrence) {
+    let searchFrom = 0, seen = 0;
+    while (true) {
+      const idx = text.indexOf(needle, searchFrom);
+      if (idx === -1) return -1;
+      searchFrom = idx + 1;
+      const after = text[idx + needle.length];
+      if (after !== undefined && !/[\s\r\n]/.test(after)) continue; // substring match
+      if (seen === occurrence) return idx;
+      seen++;
+    }
+  }
+
+  // Mirror technique for <textarea>: replicate its font/size/padding in a hidden
+  // div, insert text up to needle, measure resulting height = Y offset of that line.
+  function findOffsetInTextarea(el, needle, occurrence = 0) {
+    const value    = el.value;
+    const needleIdx = findNthOccurrence(value, needle, occurrence);
+    if (needleIdx === -1) return 0;
+
+    const cs     = getComputedStyle(el);
+    const mirror = document.createElement('div');
+    mirror.style.cssText = [
+      'position:fixed', 'visibility:hidden', 'top:0', 'left:-99999px',
+      'white-space:pre-wrap', 'word-wrap:break-word', 'box-sizing:border-box', 'overflow:hidden',
+    ].join(';');
+    mirror.style.width = el.offsetWidth + 'px';
+    for (const p of ['fontFamily','fontSize','fontWeight','fontStyle','letterSpacing',
+                     'lineHeight','paddingTop','paddingRight','paddingBottom','paddingLeft']) {
+      mirror.style[p] = cs[p];
+    }
+
+    const before = document.createElement('span');
+    before.textContent = value.slice(0, needleIdx);
+    const marker = document.createElement('span');
+    marker.textContent = needle[0] || ' ';
+    mirror.appendChild(before);
+    mirror.appendChild(marker);
+    document.body.appendChild(mirror);
+
+    const mRect  = mirror.getBoundingClientRect();
+    const kRect  = marker.getBoundingClientRect();
+    document.body.removeChild(mirror);
+    return Math.max(0, kRect.top - mRect.top);
+  }
+
+  // Find the top-offset (px) of a block's METHOD URL line within el.
+  // • textarea  → mirror-div technique (el.value, no DOM text nodes)
+  // • pre/code/CodeMirror/GitHub → el.textContent + Range API
+  //   Works when needle spans multiple syntax-highlight <span> tokens.
+  // occurrence: skip first N matches (handles duplicate METHOD+URL in same block)
+  function findBlockTopOffset(el, block, occurrence = 0) {
+    const needle = block.method + ' ' + block.url;
+
+    if (el.tagName === 'TEXTAREA') return findOffsetInTextarea(el, needle, occurrence);
+
+    try {
+      const fullText  = el.textContent; // concatenates all descendant text nodes
+      const needleIdx = findNthOccurrence(fullText, needle, occurrence);
+      if (needleIdx === -1) return 0;
+
+      // Walk text nodes to find which one owns the character at needleIdx
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      let pos = 0, node;
+      while ((node = walker.nextNode())) {
+        const len = node.textContent.length;
+        if (pos <= needleIdx && needleIdx < pos + len) {
+          const localIdx = needleIdx - pos;
+          const range = document.createRange();
+          range.setStart(node, localIdx);
+          range.setEnd(node, Math.min(localIdx + 1, len));
+          const lineRect = range.getBoundingClientRect();
+          const elRect   = el.getBoundingClientRect();
+          return Math.max(0, lineRect.top - elRect.top);
+        }
+        pos += len;
+      }
+    } catch (_) {}
+    return 0;
+  }
+
+  function systemVarValue(name) {
+    switch (name) {
+      case '$uuid':
+      case '$guid':          return crypto.randomUUID();
+      case '$timestamp':     return String(Date.now());
+      case '$randomInt':     return String(Math.floor(Math.random() * 1000));
+      case '$datetime':      return new Date().toISOString();
+      case '$localDatetime': return new Date().toLocaleString();
+      default:               return null;
+    }
+  }
+
   function applyVars(req, vars) {
-    const sub = s => s.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? `{{${k}}}`);
+    // Block-level @var definitions override popup vars
+    const merged = { ...vars, ...(req.localVars ?? {}) };
+
+    const sub = s => String(s).replace(/\{\{(=?)([\s\S]*?)\}\}/g, (full, eq, inner) => {
+      const expr = inner.trim();
+      // {{= js expression }}
+      if (eq === '=') {
+        try { return String(Function(`'use strict'; return (${expr})`)() ?? ''); }
+        catch { return full; }
+      }
+      // System variables: $uuid, $timestamp, $randomInt, $guid, $datetime, $localDatetime
+      const sv = systemVarValue(expr);
+      if (sv !== null) return sv;
+      // Popup / inline vars
+      return merged[expr] ?? full;
+    });
+
+    let url = sub(req.url);
+    // @host auto-prepend: if URL is a relative path, prepend host variable
+    if (url.startsWith('/') && merged['host']) {
+      url = merged['host'].replace(/\/$/, '') + url;
+    }
+
     return {
       ...req,
-      url:     sub(req.url),
-      headers: Object.fromEntries(Object.entries(req.headers).map(([k,v]) => [k,sub(v)])),
+      url,
+      headers: Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k, sub(v)])),
       body:    req.body ? sub(req.body) : null,
     };
   }
@@ -189,16 +310,17 @@
   const PILL_CSS = `
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
+    :host { display: block; width: 100%; height: 100%; }
+
     .pills {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-end;
-      gap: 5px;
-      padding: 8px;
+      position: absolute;
+      inset: 0;
+      overflow: visible;
       pointer-events: none;
     }
 
     .pill {
+      position: fixed;
       display: inline-flex;
       align-items: center;
       gap: 5px;
@@ -498,10 +620,15 @@
     document.addEventListener('keydown', e => { if (e.key === 'Escape') hideOverlay(); });
   }
 
-  function showOverlay(entry, idx) {
-    activeDetail = { entry, idx };
+  async function showOverlay(entry, idx) {
+    activeDetail = { entry, idx, resolvedBlock: null };
     renderOverlay();
     overlayShadow.querySelector('.backdrop').classList.remove('hidden');
+    const { variables: vars = {} } = await chrome.storage.local.get('variables');
+    if (activeDetail?.entry === entry && activeDetail?.idx === idx) {
+      activeDetail.resolvedBlock = applyVars(entry.blocks[idx], vars);
+      renderOverlay();
+    }
   }
 
   function hideOverlay() {
@@ -512,18 +639,19 @@
   function renderOverlay() {
     if (!activeDetail) return;
     const { entry, idx } = activeDetail;
-    const block  = entry.blocks[idx];
-    const result = entry.results[idx];
-    const method = block.method;
-    const mCls   = ['GET','POST','PUT','DELETE','PATCH','HEAD','OPTIONS'].includes(method)
-                   ? `m-${method}` : 'm-OTHER';
+    const block    = entry.blocks[idx];
+    const resolved = activeDetail.resolvedBlock ?? block;
+    const result   = entry.results[idx];
+    const method   = block.method;
+    const mCls     = ['GET','POST','PUT','DELETE','PATCH','HEAD','OPTIONS'].includes(method)
+                     ? `m-${method}` : 'm-OTHER';
 
     const code    = result?.status ?? 0;
     const running = result?.state === 'running';
     const hasRes  = result && !running;
     const scCls   = code === 0 ? 's-net' : code < 300 ? 's-2xx' : code < 400 ? 's-3xx' : code < 500 ? 's-4xx' : 's-5xx';
 
-    const reqHeaders = Object.entries(block.headers || {}).map(([k,v]) => `${k}: ${v}`).join('\n') || '(none)';
+    const reqHeaders = Object.entries(resolved.headers || {}).map(([k,v]) => `${k}: ${v}`).join('\n') || '(none)';
 
     const responseSection = (() => {
       if (running) return `
@@ -572,7 +700,7 @@
         <div class="card-head">
           <span class="badge ${mCls}">${esc(method)}</span>
           ${block.name ? `<span class="req-name">${esc(block.name)}</span>` : ''}
-          <span class="req-url" title="${esc(block.url)}">${esc(block.url)}</span>
+          <span class="req-url" title="${esc(resolved.url)}">${esc(resolved.url)}</span>
           ${hasRes && code > 0 ? `<span class="status-code ${scCls}">${code} ${esc(result.statusText)}</span>` : ''}
           ${hasRes && code > 0 ? `<span class="res-time">${result.time}ms</span>` : ''}
           <button class="close-btn" data-action="close">✕</button>
@@ -584,11 +712,11 @@
               <span class="k">Method</span><span class="v">${esc(method)}</span>
             </div>
             <div class="kv">
-              <span class="k">URL</span><span class="v">${esc(block.url)}</span>
+              <span class="k">URL</span><span class="v">${esc(resolved.url)}</span>
             </div>
             <div class="sub">Headers</div>
             <pre class="code">${esc(reqHeaders)}</pre>
-            ${block.body ? `<div class="sub">Body</div><pre class="code">${esc(block.body)}</pre>` : ''}
+            ${resolved.body ? `<div class="sub">Body</div><pre class="code">${esc(resolved.body)}</pre>` : ''}
           </div>
           ${responseSection}
           ${assertSection}
@@ -605,11 +733,12 @@
   }
 
   // ── Pill render ───────────────────────────────────────────────────────────
-  function renderPills(shadow, blocks, results) {
+  function renderPills(shadow, blocks, results, offsets, right = 8) {
     shadow.innerHTML = `<style>${PILL_CSS}</style>
       <div class="pills">
         ${blocks.map((b, i) => {
-          const r = results[i];
+          const r   = results[i];
+          const top = (offsets?.[i] ?? 0) + 6; // 6px nudge so pill aligns to the text line
           let cls = '', icon = '', label = '';
 
           if (!r) {
@@ -631,7 +760,7 @@
             }
           }
 
-          return `<div class="pill ${cls}" data-idx="${i}"
+          return `<div class="pill ${cls}" data-idx="${i}" style="top:${top}px;right:${right}px"
                        title="Click: run  ·  Double-click: details">
             <span class="dot"></span>
             ${icon}
@@ -646,21 +775,30 @@
 
   async function runOne(entry, i) {
     entry.results[i] = { state: 'running' };
-    renderPills(entry.shadow, entry.blocks, entry.results);
+    entry.render();
     if (activeDetail?.entry === entry && activeDetail?.idx === i) renderOverlay();
 
     const { variables: vars = {} } = await chrome.storage.local.get('variables');
     const block = entry.blocks[i];
-    const res = await chrome.runtime.sendMessage({
-      type: 'EXECUTE',
-      request: applyVars(block, vars),
+    const res = await new Promise(resolve => {
+      chrome.runtime.sendMessage({ type: 'EXECUTE', request: applyVars(block, vars) }, result => {
+        if (chrome.runtime.lastError) resolve(null);
+        else resolve(result);
+      });
     });
+
+    if (!res) {
+      entry.results[i] = { state: 'error', ok: false, status: 0, statusText: 'Extension context lost — reload page', time: 0, headers: {}, body: '', assertResults: [] };
+      entry.render();
+      if (activeDetail?.entry === entry && activeDetail?.idx === i) renderOverlay();
+      return;
+    }
 
     const assertResults = evaluateAssertions(block.assertions, res);
     const assertsPass   = assertResults.every(a => a.pass);
     const overallOk     = res.ok && assertsPass;
     entry.results[i] = { state: overallOk ? 'done' : 'error', ...res, ok: overallOk, httpOk: res.ok, assertResults };
-    renderPills(entry.shadow, entry.blocks, entry.results);
+    entry.render();
     if (activeDetail?.entry === entry && activeDetail?.idx === i) renderOverlay();
     updateGlobalIcon();
   }
@@ -669,17 +807,17 @@
     const all = registry.flatMap(e => e.results.filter(Boolean));
     if (!all.length) return;
     if (all.some(r => r.state === 'running')) {
-      chrome.runtime.sendMessage({ type: 'SET_ICON', state: 'running' });
+      chrome.runtime.sendMessage({ type: 'SET_ICON', state: 'running' }, () => { chrome.runtime.lastError; });
     } else {
-      chrome.runtime.sendMessage({ type: 'SET_ICON', state: all.every(r => r.ok) ? 'success' : 'error' });
+      chrome.runtime.sendMessage({ type: 'SET_ICON', state: all.every(r => r.ok) ? 'success' : 'error' }, () => { chrome.runtime.lastError; });
     }
   }
 
   // ── Injection ─────────────────────────────────────────────────────────────
-  function injectForElement(el, blocks) {
-    const entry = { shadow: null, blocks, results: new Array(blocks.length).fill(null), wrapper: null };
+  function injectForElement(el, blocks, precomputedOffsets) {
+    const entry = { shadow: null, blocks, results: new Array(blocks.length).fill(null), el, wrapper: null };
 
-    // Wrap element so we can absolutely-position pills inside
+    // Wrapper kept so SCROLL_TO / scrollIntoView still works
     const wrapper = document.createElement('div');
     wrapper.setAttribute('data-http-scanner-wrapper', '');
     wrapper.style.cssText = 'position:relative;display:block;';
@@ -687,13 +825,32 @@
     wrapper.appendChild(el);
     entry.wrapper = wrapper;
 
+    // Pill host lives in document.body so position:fixed pills are never clipped
+    // by overflow:hidden ancestors (scrollable code containers, Confluence panels, etc.)
     const pillHost = document.createElement('div');
     pillHost.setAttribute('data-http-scanner', '');
-    pillHost.style.cssText = 'position:absolute;top:0;right:0;z-index:100;pointer-events:none;';
-    wrapper.appendChild(pillHost);
+    pillHost.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;z-index:2147483646;pointer-events:none;overflow:visible;';
+    document.body.appendChild(pillHost);
+
+    // Measure element-relative Y offset of each request's METHOD URL line.
+    entry.offsets = precomputedOffsets ?? blocks.map((b, i) => {
+      const occurrence = blocks.slice(0, i).filter(p => p.method === b.method && p.url === b.url).length;
+      return findBlockTopOffset(el, b, occurrence);
+    });
 
     entry.shadow = pillHost.attachShadow({ mode: 'open' });
-    renderPills(entry.shadow, blocks, entry.results);
+
+    // render() converts element-relative offsets → current viewport Y for fixed pills.
+    // right = distance from viewport-right edge so pill sits at container's own right boundary.
+    entry.render = () => {
+      if (!el.isConnected) return;
+      const rect  = el.getBoundingClientRect();
+      const tops  = entry.offsets.map(off => rect.top + off);
+      const right = Math.max(8, window.innerWidth - rect.right + 8);
+      renderPills(entry.shadow, entry.blocks, entry.results, tops, right);
+    };
+
+    entry.render();
     registry.push(entry);
 
     // Debounce single-click so dblclick can cancel it
@@ -743,6 +900,8 @@
       });
       wrapper.remove();
     });
+    // Remove body-level pill hosts (position:fixed overlays)
+    document.querySelectorAll('[data-http-scanner]').forEach(el => el.remove());
     document.querySelectorAll('[data-http-scanner-done]').forEach(el => {
       el.removeAttribute('data-http-scanner-done');
     });
@@ -754,6 +913,11 @@
     document.querySelectorAll('pre, code, textarea').forEach(el => {
       if (el.tagName === 'CODE' && el.closest('pre')) return;
       if (el.dataset.httpScannerDone) return;
+      // Skip off-screen hidden textareas (e.g. GitHub's read-only-cursor-text-area)
+      if (el.tagName === 'TEXTAREA' && !el.offsetWidth && !el.offsetHeight) {
+        el.dataset.httpScannerDone = '1'; // mark so MutationObserver doesn't re-trigger
+        return;
+      }
       const text   = el.value ?? el.textContent ?? '';
       const blocks = parseText(text);
       if (!blocks.length) return;
@@ -776,7 +940,47 @@
       count++;
     });
 
-    chrome.runtime.sendMessage({ type: 'SET_ICON', state: 'default' });
+    // Strategy 3: GitHub blob view — content in td.blob-code / td.js-file-line rows
+    {
+      const codeCells = Array.from(
+        document.querySelectorAll(
+          'td.blob-code, td.js-file-line, td[id^="LC"], td.react-code-file-line'
+        )
+      );
+      if (codeCells.length) {
+        const table = codeCells[0].closest('table');
+        if (table && !table.dataset.httpScannerDone) {
+          const lines = codeCells.map(td => td.textContent);
+          const blocks = parseText(lines.join('\n'));
+          if (blocks.length) {
+            const tableRect = table.getBoundingClientRect();
+            const lineOffsets = codeCells.map(td => {
+              const r = td.getBoundingClientRect();
+              return r.top - tableRect.top;
+            });
+            const blockOffsets = blocks.map((block, bi) => {
+              const needle = block.method + ' ' + block.url;
+              const skip = blocks.slice(0, bi).filter(
+                p => p.method === block.method && p.url === block.url
+              ).length;
+              let seen = 0;
+              for (let li = 0; li < lines.length; li++) {
+                if (lines[li].includes(needle)) {
+                  if (seen === skip) return lineOffsets[li];
+                  seen++;
+                }
+              }
+              return 0;
+            });
+            table.dataset.httpScannerDone = '1';
+            injectForElement(table, blocks, blockOffsets);
+            count += blocks.length;
+          }
+        }
+      }
+    }
+
+    chrome.runtime.sendMessage({ type: 'SET_ICON', state: 'default' }, () => { chrome.runtime.lastError; });
     return count;
   }
 
@@ -829,9 +1033,68 @@
       reply({ ok: true });
     } else if (msg.type === 'STATS') {
       reply(getStats());
+    } else if (msg.type === 'GET_REPORT') {
+      chrome.storage.local.get('variables').then(({ variables: vars = {} }) => {
+        const rows = registry.flatMap(e => e.blocks.map((block, i) => {
+          const result   = e.results[i];
+          const resolved = applyVars(block, vars);
+          return {
+            method:          block.method,
+            name:            block.name ?? null,
+            url:             block.url,
+            resolvedUrl:     resolved.url,
+            headers:         block.headers,
+            resolvedHeaders: resolved.headers,
+            body:            block.body,
+            resolvedBody:    resolved.body,
+            assertions:      block.assertions ?? [],
+            state:           result?.state         ?? null,
+            ok:              result?.ok             ?? null,
+            status:          result?.status         ?? null,
+            statusText:      result?.statusText     ?? null,
+            time:            result?.time           ?? null,
+            resHeaders:      result?.headers        ?? {},
+            resBody:         result?.body           ?? null,
+            assertResults:   result?.assertResults  ?? [],
+          };
+        }));
+        reply({ requests: rows });
+      });
+      return true;
     }
   });
 
   createOverlay();
-  injectAll();
+  try { injectAll(); } catch (e) { console.warn('[HTTP Scanner] init scan error', e); }
+
+  // Re-render fixed pills on scroll/resize so they track their source lines
+  {
+    let _raf = null;
+    const rerender = () => {
+      if (_raf) return;
+      _raf = requestAnimationFrame(() => {
+        _raf = null;
+        try { registry.forEach(e => e.render?.()); } catch (_) {}
+      });
+    };
+    window.addEventListener('scroll', rerender, { capture: true, passive: true });
+    window.addEventListener('resize', rerender, { passive: true });
+  }
+
+  // Re-scan when SPA (Confluence, GitHub, etc.) renders content after document_idle.
+  // Only fires if unprocessed code elements exist; debounced to avoid thrashing.
+  {
+    let _t = null;
+    new MutationObserver(() => {
+      clearTimeout(_t);
+      _t = setTimeout(() => {
+        _t = null;
+        if (document.querySelector(
+          'pre:not([data-http-scanner-done]),' +
+          'code:not(pre code):not([data-http-scanner-done]),' +
+          'textarea:not([data-http-scanner-done])'
+        )) { try { injectAll(); } catch (e) { console.warn('[HTTP Scanner] re-scan error', e); } }
+      }, 600);
+    }).observe(document.documentElement, { childList: true, subtree: true });
+  }
 })();

@@ -211,4 +211,54 @@ textarea:focus { border-color: #58a6ff; }
 }
 .empty strong { color: #8b949e; }
 
+.btn-report {
+  margin-left: auto;
+  padding: 2px 9px;
+  background: transparent;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #8b949e;
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.btn-report:hover { color: #e6edf3; border-color: #8b949e; }
+
+.env-bar {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 7px;
+  align-items: center;
+}
+.env-select {
+  flex: 1;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #e6edf3;
+  font-size: 12px;
+  padding: 3px 6px;
+  outline: none;
+  cursor: pointer;
+}
+.env-select:focus { border-color: #58a6ff; }
+
+.env-btn {
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #8b949e;
+  font-size: 15px;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  line-height: 1;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.env-btn:hover { color: #e6edf3; border-color: #8b949e; }
+.env-del:hover { color: #f85149; border-color: #f85149; }
+
 .hidden { display: none !important; }

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "HTTP Scanner",
+  "name": "httpyac for Browser",
   "version": "1.0.0",
-  "description": "Scan webpage for httpyac HTTP requests. Run all or individually. Green/red icon status.",
+  "description": "Detect and run httpyac-style HTTP requests directly from any webpage.",
   "permissions": [
     "activeTab",
     "scripting",
@@ -23,6 +23,6 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "HTTP Scanner"
+    "default_title": "httpyac for Browser"
   }
 }
