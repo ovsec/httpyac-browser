@@ -1,0 +1,16 @@
+@baseUrl = https://jsonplaceholder.typicode.com
+
+### GET request
+GET {{baseUrl}}/posts/1
+Accept: application/json
+
+
+### POST request
+POST {{baseUrl}}/posts
+Content-Type: application/json
+
+{
+  "title": "httpYac simple example",
+  "body": "This is a basic POST request",
+  "userId": 1
+}
