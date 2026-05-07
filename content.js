@@ -66,11 +66,23 @@
 
   function parseText(text) {
     const found = [], parts = text.split(/(^###[^\n]*$)/m);
-    if (parts[0]) { const r = parseBlock(parts[0], null); if (r) found.push(r); }
+
+    // Hoist @var definitions from the preamble (before first ###) into every block.
+    // parseBlock discards them when there's no HTTP request in the preamble.
+    const globalVars = {};
+    if (parts[0]) {
+      for (const line of parts[0].split('\n')) {
+        const vm = line.trim().match(/^@(\w+)\s*:?=\s*(.*)$/);
+        if (vm) globalVars[vm[1]] = vm[2].trim();
+      }
+      const r = parseBlock(parts[0], null);
+      if (r) { r.localVars = { ...globalVars, ...r.localVars }; found.push(r); }
+    }
+
     for (let i = 1; i < parts.length; i += 2) {
       const nm = parts[i].match(/^###\s+(.+)$/);
       const r  = parseBlock(parts[i+1] || '', nm ? nm[1].trim() : null);
-      if (r) found.push(r);
+      if (r) { r.localVars = { ...globalVars, ...r.localVars }; found.push(r); }
     }
     return found;
   }
@@ -276,12 +288,20 @@
 
   // Cached copy of popup variables — kept in sync via storage listener
   let cachedVars = {};
+  let _varVersion = 0;
+  const _unresolvedCache = new WeakMap();
   chrome.storage.local.get('variables', ({ variables }) => { cachedVars = variables ?? {}; });
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes.variables) cachedVars = changes.variables.newValue ?? {};
+    if (area === 'local' && changes.variables) {
+      cachedVars = changes.variables.newValue ?? {};
+      _varVersion++;
+    }
   });
 
   function hasUnresolvedVars(block) {
+    const cached = _unresolvedCache.get(block);
+    if (cached && cached.v === _varVersion) return cached.r;
+
     const merged = { ...cachedVars, ...(block.localVars ?? {}) };
     const check = s => {
       if (!s) return false;
@@ -296,9 +316,11 @@
       }
       return false;
     };
-    return check(block.url)
+    const r = check(block.url)
       || Object.values(block.headers ?? {}).some(check)
       || check(block.body);
+    _unresolvedCache.set(block, { v: _varVersion, r });
+    return r;
   }
 
   function applyVars(req, vars) {
@@ -347,7 +369,7 @@
     }
 
     .pill-wrap {
-      position: fixed;
+      position: absolute;
       display: inline-flex;
       align-items: stretch;
       gap: 6px;
@@ -813,7 +835,7 @@
       <div class="pills">
         ${blocks.map((b, i) => {
           const r   = results[i];
-          const top = (offsets?.[i] ?? 0) + 6; // 6px nudge so pill aligns to the text line
+          const top = (offsets?.[i] ?? 0) + 6;
           let cls = '', icon = '', label = '';
 
           if (!r) {
@@ -838,7 +860,7 @@
           const warnCls = !r && hasUnresolvedVars(b) ? 'warn' : '';
           const warnTitle = warnCls ? ' title="Unresolved variables"' : '';
 
-          return `<div class="pill-wrap ${cls} ${warnCls}" data-idx="${i}" style="top:${top}px;right:${right}px">
+          return `<div class="pill-wrap ${cls} ${warnCls}" data-idx="${i}" style="top:${top}px;left:4px">
             <div class="pill"${warnTitle}>
               <span class="dot"></span>
               ${icon}
@@ -863,8 +885,9 @@
 
     const { variables: vars = {} } = await chrome.storage.local.get('variables');
     const block = entry.blocks[i];
+    const merged = { ...vars, ...(block.localVars ?? {}) };
     const res = await new Promise(resolve => {
-      chrome.runtime.sendMessage({ type: 'EXECUTE', request: applyVars(block, vars) }, result => {
+      chrome.runtime.sendMessage({ type: 'EXECUTE', request: applyVars(block, vars), vars: merged }, result => {
         if (chrome.runtime.lastError) resolve(null);
         else resolve(result);
       });
@@ -908,8 +931,6 @@
     wrapper.appendChild(el);
     entry.wrapper = wrapper;
 
-    // Pill host lives in document.body so position:fixed pills are never clipped
-    // by overflow:hidden ancestors (scrollable code containers, Confluence panels, etc.)
     // Measure offsets BEFORE DOM mutation so the layout read doesn't force reflow.
     entry.offsets = precomputedOffsets ?? blocks.map((b, i) => {
       const occurrence = blocks.slice(0, i).filter(p => p.method === b.method && p.url === b.url).length;
@@ -918,18 +939,14 @@
 
     const pillHost = document.createElement('div');
     pillHost.setAttribute('data-http-owl', '');
-    pillHost.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;z-index:2147483646;pointer-events:none;overflow:visible;';
-    document.body.appendChild(pillHost);
+    pillHost.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;z-index:2147483646;pointer-events:none;overflow:visible;';
+    wrapper.appendChild(pillHost);
     entry.shadow = pillHost.attachShadow({ mode: 'open' });
 
-    // render() converts element-relative offsets → current viewport Y for fixed pills.
-    // right = distance from viewport-right edge so pill sits at container's own right boundary.
+    // Pills are position:absolute inside the wrapper — track content on scroll automatically.
     entry.render = () => {
       if (!el.isConnected) return;
-      const rect  = el.getBoundingClientRect();
-      const tops  = entry.offsets.map(off => rect.top + off);
-      const right = Math.max(8, window.innerWidth - rect.right + 8);
-      renderPills(entry.shadow, entry.blocks, entry.results, tops, right);
+      renderPills(entry.shadow, entry.blocks, entry.results, entry.offsets, 0);
     };
 
     requestAnimationFrame(() => entry.render());
@@ -1154,35 +1171,6 @@
   createOverlay();
   try { injectAll(); } catch (e) { console.warn('[httpOwl] init scan error', e); }
 
-  // Re-render fixed pills on scroll/resize so they track their source lines
-  {
-    let _raf = null;
-    const rerender = () => {
-      if (_raf) return;
-      _raf = requestAnimationFrame(() => {
-        _raf = null;
-        try {
-          // Phase 1: batch all reads (avoids read-write-read thrash per entry)
-          const snapshots = registry.map(e => {
-            if (!e.el?.isConnected) return null;
-            const rect = e.el.getBoundingClientRect();
-            return {
-              tops: e.offsets.map(off => rect.top + off),
-              right: Math.max(8, window.innerWidth - rect.right + 8),
-            };
-          });
-          // Phase 2: batch all writes
-          registry.forEach((e, i) => {
-            const s = snapshots[i];
-            if (!s) return;
-            renderPills(e.shadow, e.blocks, e.results, s.tops, s.right);
-          });
-        } catch (_) {}
-      });
-    };
-    window.addEventListener('scroll', rerender, { capture: true, passive: true });
-    window.addEventListener('resize', rerender, { passive: true });
-  }
 
   // Re-scan when SPA (Confluence, GitHub, etc.) renders content after document_idle.
   // Only fires if unprocessed code elements exist; debounced to avoid thrashing.
@@ -1200,4 +1188,5 @@
       }, 600);
     }).observe(document.documentElement, { childList: true, subtree: true });
   }
+
 })();

@@ -112,3 +112,5 @@ coverage.lcov
 .git_*
 
 chrome-extension/
+*.zip
+scripts/

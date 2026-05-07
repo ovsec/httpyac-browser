@@ -1,3 +1,5 @@
+self.addEventListener('unhandledrejection', e => e.preventDefault());
+
 // httpyac orange + lightning bolt, browser badge changes color by state
 const STATE_BADGE = {
   default: { bg: '#1e3a5f', bar: '#2563eb' },
@@ -65,19 +67,79 @@ async function buildImageData(state, size) {
   return ctx.getImageData(0, 0, size, size);
 }
 
+const _iconCache = new Map();
+
 async function setIcon(state) {
-  const [d16, d32, d48] = await Promise.all([
-    buildImageData(state, 16),
-    buildImageData(state, 32),
-    buildImageData(state, 48),
-  ]);
-  await chrome.action.setIcon({ imageData: { 16: d16, 32: d32, 48: d48 } });
+  if (!_iconCache.has(state)) {
+    const [d16, d32, d48] = await Promise.all([
+      buildImageData(state, 16),
+      buildImageData(state, 32),
+      buildImageData(state, 48),
+    ]);
+    _iconCache.set(state, { 16: d16, 32: d32, 48: d48 });
+  }
+  await chrome.action.setIcon({ imageData: _iconCache.get(state) });
 }
 
-async function executeRequest({ method, url, headers, body }) {
+// ── OAuth2 client_credentials ─────────────────────────────────────────────────
+const _tokenCache = new Map(); // prefix → { token, expiry }
+
+async function getOAuthToken(prefix, vars) {
+  const cached = _tokenCache.get(prefix);
+  if (cached && Date.now() < cached.expiry) return cached.token;
+
+  const endpoint      = vars[`${prefix}_tokenEndpoint`];
+  const clientId      = vars[`${prefix}_clientId`];
+  const clientSecret  = vars[`${prefix}_clientSecret`];
+  const scope         = vars[`${prefix}_scope`];
+  const useAuthHeader = vars[`${prefix}_useAuthorizationHeader`] !== 'false';
+
+  if (!endpoint || !clientId || !clientSecret)
+    throw new Error(`OAuth missing: ${prefix}_tokenEndpoint / ${prefix}_clientId / ${prefix}_clientSecret`);
+
+  const body = new URLSearchParams({ grant_type: 'client_credentials' });
+  if (scope) body.set('scope', scope);
+
+  const reqHeaders = { 'Content-Type': 'application/x-www-form-urlencoded' };
+  if (useAuthHeader) {
+    reqHeaders['Authorization'] = 'Basic ' + btoa(`${clientId}:${clientSecret}`);
+  } else {
+    body.set('client_id', clientId);
+    body.set('client_secret', clientSecret);
+  }
+
+  const res = await fetch(endpoint, { method: 'POST', headers: reqHeaders, body: body.toString() });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Token endpoint ${res.status}${text ? ': ' + text.slice(0, 120) : ''}`);
+  }
+
+  const data = await res.json();
+  if (!data.access_token) throw new Error('Token response missing access_token');
+
+  const ttl = (data.expires_in ?? 3600) - 60; // 60s buffer
+  _tokenCache.set(prefix, { token: data.access_token, expiry: Date.now() + ttl * 1000 });
+  return data.access_token;
+}
+
+async function executeRequest({ method, url, headers, body }, vars = {}) {
+  // Resolve OAuth2 client_credentials before the real request
+  let hdrs = { ...(headers || {}) };
+  const authKey = Object.keys(hdrs).find(k => k.toLowerCase() === 'authorization');
+  if (authKey) {
+    const m = hdrs[authKey].match(/^oauth2\s+client_credentials\s+(\S+)$/i);
+    if (m) {
+      try {
+        hdrs[authKey] = `Bearer ${await getOAuthToken(m[1], vars)}`;
+      } catch (err) {
+        return { ok: false, status: 0, statusText: err.message, headers: {}, body: '', time: 0 };
+      }
+    }
+  }
+
   const start = Date.now();
   try {
-    const opts = { method, headers: headers || {}, redirect: 'follow' };
+    const opts = { method, headers: hdrs, redirect: 'follow' };
     if (body && !['GET', 'HEAD'].includes(method.toUpperCase())) {
       opts.body = body;
     }
@@ -112,13 +174,15 @@ async function executeRequest({ method, url, headers, body }) {
 
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (msg.type === 'SET_ICON') {
-    setIcon(msg.state).then(() => reply({ ok: true }));
+    setIcon(msg.state).then(() => reply({ ok: true })).catch(() => reply({ ok: false }));
     return true;
   }
   if (msg.type === 'EXECUTE') {
-    executeRequest(msg.request).then(result => reply(result));
+    executeRequest(msg.request, msg.vars ?? {})
+      .then(result => reply(result))
+      .catch(() => reply({ ok: false, status: 0, statusText: 'Worker error', headers: {}, body: '', time: 0 }));
     return true;
   }
 });
 
-setIcon('default');
+setIcon('default').catch(() => {});

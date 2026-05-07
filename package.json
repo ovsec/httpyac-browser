@@ -1,0 +1,11 @@
+{
+  "name": "httpowl",
+  "version": "1.0.1",
+  "private": true,
+  "scripts": {
+    "screenshots": "node scripts/capture-screenshots.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.44.0"
+  }
+}
