@@ -9,6 +9,9 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
   "permissions": [
     "activeTab",
     "storage"
@@ -26,6 +29,15 @@
       "run_at": "document_idle"
     }
   ],
+  "commands": {
+    "toggle-panel": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+H",
+        "mac": "Command+Shift+H"
+      },
+      "description": "Toggle httpOwl side panel"
+    }
+  },
   "action": {
     "default_popup": "popup.html",
     "default_title": "httpOwl"

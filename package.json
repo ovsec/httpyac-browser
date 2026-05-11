@@ -2,10 +2,19 @@
   "name": "httpowl",
   "version": "1.0.1",
   "private": true,
+  "type": "module",
   "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "screenshots": "node scripts/capture-screenshots.js"
   },
   "devDependencies": {
-    "playwright": "^1.44.0"
+    "@types/chrome": "^0.1.42",
+    "playwright": "^1.44.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.12",
+    "vitest": "^4.1.5"
   }
 }
