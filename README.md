@@ -10,14 +10,17 @@ A Chrome/Edge extension that detects [httpyac](https://httpyac.github.io/)-style
 
 ## Screenshots
 
-**Popup and auto-detected requests on a GitHub file**
-![Popup showing detected requests on GitHub blob view](screenshots/01_screenshot.png)
-
 **Inline run pills anchored to each request block**
-![Inline GET and POST run pills with 200 result badge](screenshots/02_screenshot.png)
+![Pill buttons with hover actions shown on a code block](screenshots/01_screenshot.png)
+
+**Per-request result badges**
+![GET request completed showing 200 status badge](screenshots/02_screenshot.png)
 
 **Detail overlay — full request and response**
-![Detail overlay showing request headers and response body](screenshots/03_screenshot.png)
+![Detail overlay showing request headers, response body, and assertions](screenshots/03_screenshot.png)
+
+**Side panel — request list and variables editor**
+![Side panel with request list showing completed results](screenshots/04_screenshot.png)
 
 ---
 
