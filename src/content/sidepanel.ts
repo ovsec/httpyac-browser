@@ -8,7 +8,7 @@ import sidepanelCss from './sidepanel.css?raw';
 let host: HTMLElement | null = null;
 let shadow: ShadowRoot | null = null;
 let isOpen = false;
-let activeTab: 'requests' | 'variables' = 'requests';
+let activeTab: 'requests' | 'variables' | 'about' = 'requests';
 let isRunningAll = false;
 let isRescanning = false;
 
@@ -67,6 +67,7 @@ export function createSidepanel(): void {
       <div class="tabs">
         <button class="tab-btn active" data-tab="requests">Requests</button>
         <button class="tab-btn" data-tab="variables">Variables</button>
+        <button class="tab-btn" data-tab="about">About</button>
       </div>
       <div class="tab-content" id="tab-requests">
         <div class="stats-bar"></div>
@@ -76,7 +77,7 @@ export function createSidepanel(): void {
         </div>
         <div class="request-list"></div>
       </div>
-      <div class="tab-content hidden" id="tab-variables">
+        <div class="tab-content hidden" id="tab-variables">
         <div class="env-bar">
           <select class="env-select" aria-label="Select environment"></select>
           <button class="env-btn add" aria-label="Add environment">${SYM_PLUS}</button>
@@ -84,6 +85,28 @@ export function createSidepanel(): void {
         </div>
         <div class="var-editor-wrap">
           <textarea class="var-editor" placeholder="KEY=value&#10;API_KEY=abc123&#10;BASE_URL=https://api.example.com" spellcheck="false"></textarea>
+        </div>
+      </div>
+      <div class="tab-content hidden" id="tab-about">
+        <div class="about-section">
+          <div class="about-title">http<span>Owl</span></div>
+          <div class="about-version">v1.0.1</div>
+          <p class="about-desc">
+            Browser companion for <a href="https://httpyac.github.io" target="_blank" rel="noopener">httpYac</a>
+            &mdash; runs <code>GET</code>, <code>POST</code>, <code>PUT</code>, <code>DELETE</code>, <code>PATCH</code>
+            requests and evaluates <code>??</code> assertions directly on any webpage.
+          </p>
+          <hr class="about-hr">
+          <div class="about-sub">Known Limitations</div>
+          <ul class="about-list">
+            <li>No response variable capture (<code>@variable</code>) &mdash; cannot chain requests by extracting values from responses.</li>
+            <li>No script block support &mdash; httpYac <code>&lt;script&gt;</code> blocks for custom JS logic are not executed.</li>
+            <li>Only OAuth2 <code>client_credentials</code> is supported &mdash; authorization code, PKCE, implicit, and AWS Signature flows are not implemented.</li>
+            <li>No request chaining &mdash; requests run independently; results from one cannot feed into another.</li>
+            <li>Body truncated at 5&thinsp;000 characters in the detail overlay (full body still used for assertions).</li>
+            <li>Some servers may reject requests even with extension-origin fetch due to strict CORS or security policies.</li>
+            <li>Load testing is not supported &mdash; this is a debugging tool, not a benchmarking tool.</li>
+          </ul>
         </div>
       </div>
     </div>`;
@@ -125,8 +148,10 @@ export function createSidepanel(): void {
     // Show/hide content panels
     const reqPanel = $('#tab-requests')!;
     const varPanel = $('#tab-variables')!;
+    const aboutPanel = $('#tab-about')!;
     reqPanel.classList.toggle('hidden', tab !== 'requests');
     varPanel.classList.toggle('hidden', tab !== 'variables');
+    aboutPanel.classList.toggle('hidden', tab !== 'about');
     if (tab === 'variables') loadVariablesTab();
   });
 

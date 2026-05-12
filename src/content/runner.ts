@@ -16,17 +16,36 @@ export async function runOne(entry: Entry, i: number): Promise<void> {
   const vars = stored.variables ?? {};
   const block = entry.blocks[i];
   const merged = { ...vars, ...(block.localVars ?? {}) };
+
+  const resolvedReq = applyVars(block, vars);
+  console.log('[httpOwl] runOne sendMessage', { method: block.method, url: resolvedReq.url, blockUrl: block.url });
+
   let timedOut = false;
   const res = await new Promise<ExecResponse | null>(resolve => {
-    const timeout = setTimeout(() => { timedOut = true; resolve(null); }, 30000);
-    chrome.runtime.sendMessage(
-      { type: 'EXECUTE' as const, request: applyVars(block, vars), vars: merged },
-      (result: ExecResponse | undefined) => {
-        clearTimeout(timeout);
-        if (chrome.runtime.lastError) resolve(null);
-        else resolve(result ?? null);
-      },
-    );
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      console.warn('[httpOwl] TIMEOUT — no response from background after 30s');
+      resolve(null);
+    }, 30000);
+    try {
+      chrome.runtime.sendMessage(
+        { type: 'EXECUTE' as const, request: resolvedReq, vars: merged },
+        (result: ExecResponse | undefined) => {
+          clearTimeout(timeout);
+          if (chrome.runtime.lastError) {
+            console.warn('[httpOwl] sendMessage lastError', chrome.runtime.lastError.message);
+            resolve(null);
+          } else {
+            console.log('[httpOwl] sendMessage response received', { ok: result?.ok, status: result?.status, time: result?.time });
+            resolve(result ?? null);
+          }
+        },
+      );
+    } catch (err) {
+      clearTimeout(timeout);
+      console.error('[httpOwl] sendMessage threw synchronously', err);
+      resolve(null);
+    }
   });
 
   if (!res) {
@@ -109,4 +128,29 @@ export function getStats(): Stats {
 
 export function flatEntry(index: number): { e: Entry; i: number } | null {
   return registry.flatMap(e => e.blocks.map((_, i) => ({ e, i })))[index] ?? null;
+}
+
+// ── Diagnostic self-test ──────────────────────────────────────────────────────
+export async function diagnose(): Promise<Record<string, unknown>> {
+  const results: Record<string, unknown> = {};
+  const elapsed = (label: string, fn: () => Promise<unknown>): Promise<void> => {
+    const start = performance.now();
+    return fn().then(
+      r => { results[label] = { ok: true, ms: Math.round(performance.now() - start), data: r }; },
+      e => { results[label] = { ok: false, ms: Math.round(performance.now() - start), error: String(e) }; },
+    );
+  };
+
+  await elapsed('storage.local.get', () => chrome.storage.local.get('variables'));
+  await elapsed('sendMessage PING (background alive?)', () =>
+    new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('PING timed out after 5s')), 5000);
+      chrome.runtime.sendMessage({ type: 'PING' }, (reply: unknown) => {
+        clearTimeout(timer);
+        chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve(reply);
+      });
+    }),
+  );
+
+  return results;
 }

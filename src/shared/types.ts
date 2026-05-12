@@ -86,7 +86,8 @@ export type PopupMessage =
 
 export type ContentMessage =
   | { type: 'EXECUTE'; request: ResolvedRequest; vars: Record<string, string> }
-  | { type: 'SET_ICON'; state: IconState };
+  | { type: 'SET_ICON'; state: IconState }
+  | { type: 'PING' };
 
 export interface ResolvedRequest {
   name: string | null;

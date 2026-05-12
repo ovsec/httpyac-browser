@@ -1,6 +1,6 @@
 import { injectAll } from './inject';
 import { createOverlay } from './overlay';
-import { registry, runOne, getStats, flatEntry } from './runner';
+import { registry, runOne, getStats, flatEntry, diagnose } from './runner';
 import { initVariables, subscribeVarsChanged, highlightVariables, applyVars } from './variables';
 import { createSidepanel, renderSidepanel } from './sidepanel';
 import { initToasts } from './toast';
@@ -12,6 +12,7 @@ import type { ReportRow } from '../shared/types';
   reinject: injectAll,
   getStats,
   runAll: () => Promise.all(registry.flatMap(e => e.blocks.map((_, i) => runOne(e, i)))),
+  diagnose,
 };
 
 // ── Message listeners ────────────────────────────────────────────────────────

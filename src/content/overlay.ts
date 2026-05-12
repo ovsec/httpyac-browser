@@ -95,9 +95,31 @@ export function renderOverlay(): void {
         <p class="muted">Not yet run. Click \u25B6 Run below.</p>
       </div>`;
     const resHeaders = Object.entries(result.headers || {}).map(([k, v]) => `${k}: ${v}`).join('\n') || '(none)';
-    const body = code === 0
+    const isHttpError = code >= 400;
+    const rawBody = result.body || '';
+
+    // Determine error type and hint for network errors (code 0)
+    const netErrType = (() => {
+      if (code !== 0) return null;
+      if (result.statusText?.toLowerCase().includes('timed out')) return 'Timeout';
+      if (result.statusText?.toLowerCase().includes('extension context')) return 'Context Lost';
+      if (result.statusText?.startsWith('Token endpoint') || result.statusText?.includes('OAuth missing')) return 'OAuth Error';
+      return 'Network Error';
+    })();
+    const netErrHint = netErrType === 'Timeout'
+      ? 'Request did not receive a response within 30 seconds. The endpoint may be unreachable from the extension context.'
+      : netErrType === 'Context Lost'
+      ? 'The background service worker terminated. Reload the page to restore the extension connection.'
+      : netErrType === 'OAuth Error'
+      ? 'OAuth token acquisition failed. Check your client credentials in the Variables tab.'
+      : null;
+
+    // Format body for display
+    const displayBody = code === 0
       ? result.statusText
-      : formatBody(result.body || '', result.headers?.['content-type'] || '');
+      : formatBody(rawBody, result.headers?.['content-type'] || '');
+    const hasBody = code !== 0 && rawBody.length > 0;
+
     return `
       <div class="section">
         <div class="sec-title">Response</div>
@@ -106,10 +128,19 @@ export function renderOverlay(): void {
           <span class="v ${scCls}">${code === 0 ? 'Network Error' : `${code} ${esc(result.statusText)}`}</span>
         </div>
         ${code > 0 ? `<div class="kv"><span class="k">Time</span><span class="v">${result.time}ms</span></div>` : ''}
+        ${code === 0 ? `
+        <div class="kv"><span class="k">Error Type</span><span class="err-type s-net">${netErrType}</span></div>
+        <div class="sub">Error</div>
+        <pre class="code">${esc(result.statusText || 'Unknown error')}</pre>
+        ${netErrHint ? `<p class="err-hint">${netErrHint}</p>` : ''}` : ''}
+        ${isHttpError ? `
+        <div class="kv"><span class="k">Error Type</span><span class="err-type ${scCls}">HTTP ${code}</span></div>
+        ${hasBody ? `<div class="sub">Error Body</div>
+        <pre class="code body-err">${esc(displayBody)}</pre>` : `<p class="muted">(no response body)</p>`}` : ''}
         <div class="sub">Headers</div>
         <pre class="code">${esc(resHeaders)}</pre>
-        <div class="sub">Body</div>
-        <pre class="code">${esc(body)}</pre>
+        ${!isHttpError && code > 0 ? `<div class="sub">Body</div>
+        <pre class="code">${esc(displayBody)}</pre>` : ''}
       </div>`;
   })();
 
