@@ -117,6 +117,7 @@ export function injectAll(force = false): number {
         const lines = codeCells.map(td => td.textContent ?? '');
         const blocks = parseText(lines.join('\n'));
         if (blocks.length) {
+          table.dataset.httpOwlBlob = '1';
           const tableRect = table.getBoundingClientRect();
           const lineOffsets = codeCells.map(td => td.getBoundingClientRect().top - tableRect.top);
           const blockOffsets = blocks.map((block, bi) => {
@@ -145,6 +146,11 @@ export function injectAll(force = false): number {
   document.querySelectorAll<HTMLElement>('pre, code, textarea').forEach(el => {
     if (el.tagName === 'CODE' && el.closest('pre')) return;
     if (el.dataset.httpOwlDone) return;
+    if (el.closest('[data-http-owl-wrapper]')) return;
+    // Skip elements inside a GitHub blob table (Strategy 3 handles offset measurement)
+    if (el.closest('[data-http-owl-blob]')) { el.dataset.httpOwlDone = '1'; return; }
+    // Skip elements nested inside an already-injected element (<pre> inside <code>, etc.)
+    if (el.closest('[data-http-owl-done]')) return;
     // Skip off-screen hidden textareas (e.g. GitHub read-only-cursor-text-area)
     if (el.tagName === 'TEXTAREA') {
       const ta = el as HTMLTextAreaElement;

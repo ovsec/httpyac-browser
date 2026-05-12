@@ -42,15 +42,12 @@ export function renderPills(
         const requestLabel = b.name ? `${methodName} ${esc(b.name)}` : `${methodName} ${esc(shortUrl(b.url))}`;
 
         return `<div class="pill-wrap ${cls} ${warnCls}" data-idx="${i}" style="top:${top}px;left:4px">
-          <div class="pill"${warnTitle}>
+          <div class="pill" data-action="run" data-idx="${i}"${warnTitle}>
             <span class="dot"></span>
             ${icon}
             ${label}
           </div>
-          <div class="pill-actions">
-            <button class="pill-btn btn-run" data-action="run" data-idx="${i}" aria-label="Run ${requestLabel}">\u25B6 Run</button>
-            <button class="pill-btn btn-details" data-action="details" data-idx="${i}" aria-label="Details for ${requestLabel}">\u2197 Details</button>
-          </div>
+          <button class="details-btn" data-action="details" data-idx="${i}" aria-label="Details for ${requestLabel}" title="Details">\u2197</button>
         </div>`;
       }).join('')}
     </div>`;

@@ -16,10 +16,13 @@ export async function runOne(entry: Entry, i: number): Promise<void> {
   const vars = stored.variables ?? {};
   const block = entry.blocks[i];
   const merged = { ...vars, ...(block.localVars ?? {}) };
+  let timedOut = false;
   const res = await new Promise<ExecResponse | null>(resolve => {
+    const timeout = setTimeout(() => { timedOut = true; resolve(null); }, 30000);
     chrome.runtime.sendMessage(
       { type: 'EXECUTE' as const, request: applyVars(block, vars), vars: merged },
       (result: ExecResponse | undefined) => {
+        clearTimeout(timeout);
         if (chrome.runtime.lastError) resolve(null);
         else resolve(result ?? null);
       },
@@ -29,7 +32,7 @@ export async function runOne(entry: Entry, i: number): Promise<void> {
   if (!res) {
     entry.results[i] = {
       state: 'error', ok: false, httpOk: false, status: 0,
-      statusText: 'Extension context lost \u2014 reload page', time: 0,
+      statusText: timedOut ? 'Request timed out after 30s' : 'Extension context lost \u2014 reload page', time: 0,
       headers: {}, body: '', assertResults: [],
     };
     entry.render();

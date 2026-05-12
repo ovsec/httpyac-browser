@@ -80,6 +80,7 @@ createOverlay();
 createSidepanel();
 initToasts();
 try { injectAll(); } catch (e) { console.warn('[httpOwl] init scan error', e); }
+renderSidepanel();
 
 // Restore persisted results from previous page visit
 restoreResults().catch(() => {});
@@ -100,6 +101,7 @@ new MutationObserver(() => {
       'textarea:not([data-http-owl-done])',
     )) {
       try { injectAll(); } catch (e) { console.warn('[httpOwl] re-scan error', e); }
+      renderSidepanel();
     }
   }, 600);
 }).observe(document.documentElement, { childList: true, subtree: true });

@@ -189,8 +189,10 @@ export function renderSidepanel(): void {
 
 function renderTab(): void {
   const stats = getStats();
+  const tabEl = $('.tab');
   const countEl = $('.tab-count');
   const dotEl = $('.tab-dot');
+  if (tabEl) tabEl.classList.toggle('hidden', stats.total === 0);
   if (countEl) countEl.textContent = String(stats.total);
   if (dotEl) {
     dotEl.className = 'tab-dot';

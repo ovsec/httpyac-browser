@@ -18,22 +18,20 @@
   user-select: none;
 }
 
-.pill, .pill-btn {
-  font-size: 11px;
-  font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
-  white-space: nowrap;
-  letter-spacing: 0.02em;
-}
-
 .pill {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   padding: 4px 12px;
+  font-size: 11px;
+  font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
   background: rgba(13, 17, 23, 0.88);
   border: 1px solid rgba(48, 54, 61, 0.75);
   border-radius: 20px;
   color: rgba(139, 148, 158, 0.9);
+  cursor: pointer;
   transition: background 0.2s, border-color 0.2s, color 0.2s;
 }
 .pill-wrap:hover .pill {
@@ -95,44 +93,28 @@
 }
 .pill-wrap.success .assert-badge.fail { background: #7f1d1d22; color: #f85149; }
 
-/* action buttons slide-in */
-.pill-actions {
-  display: inline-flex;
-  align-items: stretch;
-  gap: 5px;
-  overflow: hidden;
-  max-width: 0;
-  opacity: 0;
-  transition: max-width 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94) 0.12s,
-              opacity   0.35s ease 0.18s;
-  pointer-events: none;
-}
-.pill-wrap:hover .pill-actions {
-  max-width: 200px;
-  opacity: 1;
-  pointer-events: auto;
-  transition: max-width 0.3s cubic-bezier(0.55, 0, 1, 0.45),
-              opacity   0.2s ease;
-}
-
-.pill-btn {
+/* permanent details button on the right of the pill */
+.details-btn {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  padding: 0 10px;
+  justify-content: center;
+  align-self: center;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0;
   background: rgba(13, 17, 23, 0.88);
-  border: 1px solid #30363d;
-  border-radius: 16px;
-  color: #8b949e;
+  border: 1px solid rgba(48, 54, 61, 0.75);
+  border-radius: 50%;
+  color: #6b7280;
+  font-size: 11px;
+  font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
   cursor: pointer;
+  flex-shrink: 0;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
+  line-height: 1;
 }
-.pill-btn.btn-run:hover {
-  background: #238636;
-  border-color: #2ea043;
-  color: #fff;
-}
-.pill-btn.btn-details:hover {
+.details-btn:hover {
   background: #21262d;
   border-color: #8b949e;
   color: #e6edf3;

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">httpOwl icon</title>
+  <desc id="desc">Minimal abstract owl face with ear tufts on a dark gradient rounded square.</desc>
+  <defs>
+    <linearGradient id="bg" x1="16" y1="12" x2="112" y2="116" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#172554"/>
+      <stop offset="0.6" stop-color="#0f766e"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+    <linearGradient id="faceGrad" x1="64" y1="26" x2="64" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#ccfbf1"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#bg)"/>
+  <path fill="url(#faceGrad)"
+    d="M38 26 L52 36 L64 40 L76 36 L90 26
+       C102 48 106 78 96 94
+       C88 108 74 112 64 112
+       C54 112 40 108 32 94
+       C22 78 26 48 38 26 Z"/>
+  <circle cx="48" cy="66" r="11" fill="#0f172a"/>
+  <circle cx="80" cy="66" r="11" fill="#0f172a"/>
+  <circle cx="51" cy="63" r="3.5" fill="#f8fafc" opacity="0.85"/>
+  <circle cx="83" cy="63" r="3.5" fill="#f8fafc" opacity="0.85"/>
+  <path fill="#f59e0b" d="M64 82 L58 90 L70 90 Z"/>
+</svg>
