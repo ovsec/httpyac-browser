@@ -6,11 +6,53 @@ import { registry, runOne } from './runner';
 import { showOverlay } from './overlay';
 import { highlightVariables } from './variables';
 
+// ── Content-based deduplication ──────────────────────────────────────────────
+// Prevents re-injecting the same request text from different DOM elements,
+// which happens on Confluence/SPA pages where content renders in multiple
+// forms during progressive loading.
+//
+// Uses a Map from content-key → Entry so we can detect when the SPA destroys
+// the injected wrapper: if the Entry's wrapper is disconnected from the DOM,
+// we clean up and allow re-injection so pills don't disappear permanently.
+const contentEntryMap = new Map<string, Entry>();
+
+function normalizeText(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Returns true if this content has already been injected and is still active
+ * in the DOM. Returns false if content is new or if the previous injection
+ * was destroyed (wrapper disconnected) — caller should proceed with injection.
+ */
+function isContentActive(text: string): boolean {
+  const key = normalizeText(text);
+  const entry = contentEntryMap.get(key);
+  if (!entry) return false;
+  // Still alive → skip duplicate injection
+  if (entry.wrapper?.isConnected) return true;
+  // Old injection was destroyed by SPA re-render → clean up
+  contentEntryMap.delete(key);
+  const ri = registry.indexOf(entry);
+  if (ri >= 0) registry.splice(ri, 1);
+  return false;
+}
+
+function registerContent(text: string, entry: Entry): void {
+  const key = normalizeText(text);
+  contentEntryMap.set(key, entry);
+}
+
+function resetContentKeys(): void {
+  contentEntryMap.clear();
+}
+
 // ── Injection ────────────────────────────────────────────────────────────────
 export function injectForElement(
   el: HTMLElement,
   blocks: Block[],
   precomputedOffsets?: number[],
+  sourceText?: string,
 ): void {
   const entry: Entry = {
     shadow: null,
@@ -49,6 +91,7 @@ export function injectForElement(
 
   requestAnimationFrame(() => entry.render());
   registry.push(entry);
+  if (sourceText) registerContent(sourceText, entry);
 
   // Highlight {{...}} variables in the source element
   highlightVariables(el, blocks);
@@ -96,6 +139,7 @@ export function injectAll(force = false): number {
       el.removeAttribute('data-http-owl-done');
     });
     registry.length = 0;
+    resetContentKeys();
   }
 
   let count = 0;
@@ -163,10 +207,14 @@ export function injectAll(force = false): number {
     }
 
     const text = (el as HTMLTextAreaElement).value ?? el.textContent ?? '';
+    if (!text || isContentActive(text)) {
+      el.dataset.httpOwlDone = '1';
+      return;
+    }
     const blocks = parseText(text);
     if (!blocks.length) return;
     el.dataset.httpOwlDone = '1';
-    injectForElement(el, blocks);
+    injectForElement(el, blocks, undefined, text);
     count += blocks.length;
   });
 
@@ -177,10 +225,11 @@ export function injectAll(force = false): number {
     const codeEl = findNextCodeEl(heading);
     if (!codeEl || codeEl.dataset.httpOwlDone) return;
     const text = (codeEl as HTMLTextAreaElement).value ?? codeEl.textContent ?? '';
+    if (!text || isContentActive(text)) return;
     const block = parseBlock(text.trim(), name);
     if (!block) return;
     codeEl.dataset.httpOwlDone = '1';
-    injectForElement(codeEl, [block]);
+    injectForElement(codeEl, [block], undefined, text);
     count++;
   });
 

@@ -115,3 +115,4 @@ coverage.lcov
 chrome-extension/
 *.zip
 scripts/
+promo/

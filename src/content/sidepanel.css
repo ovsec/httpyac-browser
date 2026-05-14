@@ -472,3 +472,92 @@
   font-size: 11px;
   color: #c9d1d9;
 }
+
+/* ── Checkbox ────────────────────────────────────────────────────────── */
+.req-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid #484f58;
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin: 0;
+  transition: background 0.12s, border-color 0.12s;
+  position: relative;
+}
+.req-checkbox:hover { border-color: #58a6ff; }
+.req-checkbox:checked {
+  background: #238636;
+  border-color: #2ea043;
+}
+.req-checkbox:checked::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  width: 5px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* ── Method filter dropdown ──────────────────────────────────────────── */
+.method-filter {
+  padding: 4px 6px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 5px;
+  color: #e6edf3;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+  max-width: 90px;
+}
+.method-filter:focus { outline: none; border-color: #58a6ff; }
+
+/* ── Report button ───────────────────────────────────────────────────── */
+.action-btn.report {
+  background: #1c1e29;
+  border-color: #30363d;
+  color: #8b949e;
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 9px;
+}
+.action-btn.report:hover:not(:disabled) {
+  background: #30363d;
+  border-color: #8b949e;
+  color: #c9d1d9;
+}
+
+/* ── Run Selected button ─────────────────────────────────────────────── */
+.action-btn.run-selected {
+  background: #0f2d16;
+  border-color: #238636;
+  color: #3fb950;
+  font-size: 11px;
+}
+.action-btn.run-selected:hover:not(:disabled) {
+  background: #238636;
+  color: #fff;
+}
+.action-btn.run-selected:disabled {
+  background: #0f2d16;
+  border-color: #238636;
+  opacity: 0.4;
+}
+
+/* ── Unresolved variable warning ─────────────────────────────────────── */
+.req-item.unresolved { opacity: 0.6; }
+.req-item.unresolved:hover { opacity: 0.85; }
+.req-item .warn-icon {
+  color: #d29922;
+  font-size: 11px;
+  margin-right: 2px;
+}
+.req-label .warn-icon { display: inline; }

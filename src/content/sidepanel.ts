@@ -1,7 +1,7 @@
-import type { Stats } from '../shared/types';
+import type { Stats, Block, ReportRow } from '../shared/types';
 import { registry, runOne, getStats, flatEntry } from './runner';
 import { injectAll } from './inject';
-import { subscribeVarsChanged } from './variables';
+import { subscribeVarsChanged, hasUnresolvedVars, getCachedVars, applyVars } from './variables';
 import sidepanelCss from './sidepanel.css?raw';
 
 // ── State ──────────────────────────────────────────────────────────────
@@ -11,6 +11,8 @@ let isOpen = false;
 let activeTab: 'requests' | 'variables' | 'about' = 'requests';
 let isRunningAll = false;
 let isRescanning = false;
+let selectedIndices = new Set<number>();
+let methodFilter = 'ALL';
 
 interface EnvConfig {
   envs: Record<string, string>;
@@ -42,6 +44,8 @@ const SYM_PLUS    = '+';
 const SYM_MINUS   = '\u2212';
 const SYM_CLOSE   = '\u2715';
 const SYM_HOUSE   = '\u2302';
+const SYM_WARN    = '\u26A0';
+const SYM_DOWN    = '\u2193';
 
 // ── Initialise ─────────────────────────────────────────────────────────
 export function createSidepanel(): void {
@@ -72,8 +76,19 @@ export function createSidepanel(): void {
       <div class="tab-content" id="tab-requests">
         <div class="stats-bar"></div>
         <div class="action-bar">
+          <select class="method-filter" aria-label="Filter by HTTP method">
+            <option value="ALL">All</option>
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+            <option value="DELETE">DELETE</option>
+            <option value="PATCH">PATCH</option>
+            <option value="OTHER">OTHER</option>
+          </select>
           <button class="action-btn run-all" aria-label="Run all requests">${SYM_RUN} Run All</button>
-          <button class="action-btn rescan" aria-label="Re-scan page">${SYM_SPIN} Re-scan</button>
+          <button class="action-btn run-selected" aria-label="Run selected requests" disabled>${SYM_RUN} Sel</button>
+          <button class="action-btn rescan" aria-label="Re-scan page" title="Re-scan">${SYM_SPIN}</button>
+          <button class="action-btn report" aria-label="Download HTML report" title="Download HTML report">${SYM_DOWN}</button>
         </div>
         <div class="request-list"></div>
       </div>
@@ -90,7 +105,7 @@ export function createSidepanel(): void {
       <div class="tab-content hidden" id="tab-about">
         <div class="about-section">
           <div class="about-title">http<span>Owl</span></div>
-          <div class="about-version">v1.0.1</div>
+          <div class="about-version">v1.0.3</div>
           <p class="about-desc">
             Browser companion for <a href="https://httpyac.github.io" target="_blank" rel="noopener">httpYac</a>
             &mdash; runs <code>GET</code>, <code>POST</code>, <code>PUT</code>, <code>DELETE</code>, <code>PATCH</code>
@@ -158,8 +173,17 @@ export function createSidepanel(): void {
   // Run All
   $('.action-btn.run-all')!.addEventListener('click', runAllRequests);
 
+  // Run Selected
+  $('.action-btn.run-selected')!.addEventListener('click', runSelectedRequests);
+
+  // Method filter
+  $('.method-filter')!.addEventListener('change', handleFilterChange);
+
   // Re-scan
   $('.action-btn.rescan')!.addEventListener('click', rescanPage);
+
+  // Report
+  $('.action-btn.report')!.addEventListener('click', generateReport);
 
   // Variables: env select change
   $('.env-select')!.addEventListener('change', onEnvChange);
@@ -174,9 +198,12 @@ export function createSidepanel(): void {
   // Variables: delete env
   $('.env-btn.del')!.addEventListener('click', deleteEnvironment);
 
-  // Re-highlight on variable changes from external sources
+  // Re-highlight + re-render request list on variable changes from external sources
   subscribeVarsChanged(() => {
-    if (isOpen && activeTab === 'variables') loadVariablesTab();
+    if (isOpen) {
+      if (activeTab === 'variables') loadVariablesTab();
+      renderSidepanel(); // re-render requests to update unresolved var states
+    }
   });
 
   // Keyboard shortcut (Ctrl+Shift+H) forwarded from background
@@ -253,19 +280,29 @@ function renderRequestsTab(): void {
       <span class="stat-item">Total: ${stats.total}</span>
       ${stats.ok > 0 ? `<span class="stat-item ok">${SYM_CHECK} ${stats.ok}</span>` : ''}
       ${stats.err > 0 ? `<span class="stat-item err">${SYM_CROSS} ${stats.err}</span>` : ''}
+      ${selectedIndices.size > 0 ? `<span class="stat-item">Selected: ${selectedIndices.size}</span>` : ''}
     `;
   }
 
   // Action buttons
   const runAllBtn = $('.action-btn.run-all') as HTMLButtonElement | null;
+  const runSelBtn = $('.action-btn.run-selected') as HTMLButtonElement | null;
   const rescanBtn = $('.action-btn.rescan') as HTMLButtonElement | null;
   if (runAllBtn) {
     runAllBtn.disabled = isRunningAll || stats.total === 0;
     runAllBtn.textContent = isRunningAll ? `${SYM_SPIN} Running\u2026` : `${SYM_RUN} Run All`;
   }
+  if (runSelBtn) {
+    runSelBtn.disabled = selectedIndices.size === 0 || isRunningAll;
+    runSelBtn.textContent = isRunningAll ? `${SYM_SPIN}` : `${SYM_RUN} Sel`;
+  }
   if (rescanBtn) {
     rescanBtn.disabled = isRescanning;
-    rescanBtn.textContent = isRescanning ? `${SYM_SPIN} Scanning\u2026` : `${SYM_SPIN} Re-scan`;
+    rescanBtn.textContent = isRescanning ? `${SYM_SPIN}` : `${SYM_SPIN}`;
+  }
+  const reportBtn = $('.action-btn.report') as HTMLButtonElement | null;
+  if (reportBtn) {
+    reportBtn.disabled = stats.done === 0;
   }
 
   // Error state
@@ -277,18 +314,42 @@ function renderRequestsTab(): void {
     return;
   }
 
-  renderRequestItems(stats);
+  // Filter and render
+  const filtered = stats.requests.filter((r, i) => {
+    if (methodFilter === 'ALL') return true;
+    if (methodFilter === 'OTHER') return !['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(r.method ?? 'GET');
+    return (r.method ?? 'GET') === methodFilter;
+  });
+
+  // Remove selected indices that are no longer visible
+  const visibleIndices = new Set(filtered.map(r => stats.requests.indexOf(r)));
+  for (const idx of selectedIndices) {
+    if (!visibleIndices.has(idx)) selectedIndices.delete(idx);
+  }
+
+  renderRequestItems(filtered, stats);
 }
 
-function renderRequestItems(stats: Stats): void {
+function renderRequestItems(requests: Stats['requests'], fullStats: Stats): void {
   const list = $('.request-list');
   if (!list) return;
 
-  list.innerHTML = stats.requests.map((r, i) => {
+  list.innerHTML = requests.map((r, _viewIdx) => {
+    // Compute original flat index for state access
+    const origIdx = fullStats.requests.indexOf(r);
     const method = r.method ?? 'GET';
     const mCls = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(method) ? method : 'OTHER';
     const label = r.name || shortUrl(r.url);
     const running = r.state === 'running';
+    const isChecked = selectedIndices.has(origIdx);
+
+    // Check unresolved variables
+    const entry = flatEntry(origIdx);
+    let hasUnresolved = false;
+    if (entry) {
+      const block = entry.e.blocks[entry.i];
+      hasUnresolved = hasUnresolvedVars(block);
+    }
 
     let resultHtml = '';
     if (running) {
@@ -306,46 +367,108 @@ function renderRequestItems(stats: Stats): void {
       }
     }
 
-    const btnDisabled = running ? 'disabled' : '';
-    const btnContent = running ? SYM_SPIN : SYM_RUN;
-    return `<div class="req-item" data-index="${i}">
+    const btnDisabled = running || hasUnresolved ? 'disabled' : '';
+    const btnTitle = hasUnresolved ? 'Unresolved variables — define them in Variables tab' : '';
+    const itemClass = hasUnresolved ? 'req-item unresolved' : 'req-item';
+    const warnIcon = hasUnresolved ? `<span class="warn-icon" title="Unresolved variables">${SYM_WARN}</span> ` : '';
+
+    return `<div class="${itemClass}" data-index="${origIdx}">
+      <input type="checkbox" class="req-checkbox" data-index="${origIdx}" ${isChecked ? 'checked' : ''}>
       <span class="req-method ${mCls}">${method}</span>
-      <span class="req-label" title="${escAttr(r.url)}">${escHtml(label)}</span>
+      <span class="req-label" title="${hasUnresolved ? 'Missing variables — define them in Variables tab' : escAttr(r.url)}">${warnIcon}${escHtml(label)}</span>
       ${resultHtml}
-      <button class="req-run-btn" data-index="${i}" ${btnDisabled}>${btnContent}</button>
+      <button class="req-run-btn" data-index="${origIdx}" ${btnDisabled} title="${btnTitle}">${running ? SYM_SPIN : SYM_RUN}</button>
     </div>`;
   }).join('');
 
   // Bind events
   list.querySelectorAll('.req-item').forEach(row => {
     const idx = parseInt((row as HTMLElement).dataset.index!, 10);
+
+    // Checkbox toggle
+    const cb = row.querySelector('.req-checkbox') as HTMLInputElement;
+    cb.addEventListener('change', () => {
+      if (cb.checked) selectedIndices.add(idx);
+      else selectedIndices.delete(idx);
+      renderRequestsTab();
+    });
+
+    // Row click → scroll to block (skip if clicking checkbox or run button)
     row.addEventListener('click', (e: Event) => {
       if ((e.target as HTMLElement).closest('.req-run-btn')) return;
+      if ((e.target as HTMLElement).closest('.req-checkbox')) return;
       const item = flatEntry(idx);
       if (item) {
         item.e.wrapper?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     });
+
+    // Run button
     const runBtn = row.querySelector('.req-run-btn') as HTMLButtonElement;
-    runBtn.addEventListener('click', async (e: Event) => {
-      e.stopPropagation();
-      runBtn.disabled = true;
-      const item = flatEntry(idx);
-      if (item) {
-        await runOne(item.e, item.i);
-        renderSidepanel();
+    if (runBtn) {
+      runBtn.addEventListener('click', async (e: Event) => {
+        e.stopPropagation();
+        runBtn.disabled = true;
+        const item = flatEntry(idx);
+        if (item) {
+          await runOne(item.e, item.i);
+          renderSidepanel();
+        }
+      });
+    }
+  });
+}
+
+// ── Filter / Selection ─────────────────────────────────────────────────
+function handleFilterChange(): void {
+  const sel = $('.method-filter') as HTMLSelectElement;
+  methodFilter = sel.value;
+  selectedIndices.clear();
+
+  // Auto-select all visible requests when filtering by a specific method
+  if (methodFilter !== 'ALL') {
+    const stats = getStats();
+    stats.requests.forEach((r, i) => {
+      if (methodFilter === 'OTHER') {
+        if (!['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(r.method ?? 'GET')) selectedIndices.add(i);
+      } else if ((r.method ?? 'GET') === methodFilter) {
+        selectedIndices.add(i);
       }
     });
-  });
+  }
+
+  renderRequestsTab();
+}
+
+function clearSelection(): void {
+  selectedIndices.clear();
+}
+
+// ── Run Selected ───────────────────────────────────────────────────────
+async function runSelectedRequests(): Promise<void> {
+  if (isRunningAll || selectedIndices.size === 0) return;
+  isRunningAll = true;
+  renderSidepanel();
+
+  const indices = Array.from(selectedIndices);
+  await Promise.all(indices.map(async idx => {
+    const item = flatEntry(idx);
+    if (item) await runOne(item.e, item.i);
+  }));
+
+  isRunningAll = false;
+  selectedIndices.clear();
+  renderSidepanel();
 }
 
 // ── Run All ────────────────────────────────────────────────────────────
 async function runAllRequests(): Promise<void> {
   if (isRunningAll) return;
   isRunningAll = true;
+  clearSelection();
   renderSidepanel();
 
-  // Run all requests in parallel (same as existing behavior)
+  // Run all requests in parallel
   await Promise.all(registry.flatMap(e => e.blocks.map((_, i) => runOne(e, i))));
 
   isRunningAll = false;
@@ -356,12 +479,184 @@ async function runAllRequests(): Promise<void> {
 async function rescanPage(): Promise<void> {
   if (isRescanning) return;
   isRescanning = true;
+  clearSelection();
   renderSidepanel();
 
   try { injectAll(true); } catch (e) { console.warn('[httpOwl] re-scan error', e); }
 
   isRescanning = false;
   renderSidepanel();
+}
+
+// ── Report Generation ──────────────────────────────────────────────────
+async function generateReport(): Promise<void> {
+  const vars = getCachedVars();
+  const rows: ReportRow[] = registry.flatMap(e => e.blocks.map((block, i) => {
+    const result = e.results[i];
+    const resolved = applyVars(block, vars);
+    return {
+      method: block.method,
+      name: block.name ?? null,
+      url: block.url,
+      resolvedUrl: resolved.url,
+      headers: block.headers,
+      resolvedHeaders: resolved.headers,
+      body: block.body,
+      resolvedBody: resolved.body,
+      assertions: block.assertions ?? [],
+      state: result?.state ?? null,
+      ok: result?.ok ?? null,
+      status: result?.status ?? null,
+      statusText: result?.statusText ?? null,
+      time: result?.time ?? null,
+      resHeaders: result?.headers ?? {},
+      resBody: result?.body ?? null,
+      assertResults: result?.assertResults ?? [],
+    };
+  }));
+
+  if (!rows.length) return;
+  const html = buildReportHtml(rows);
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `http-report-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.html`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function buildReportHtml(requests: ReportRow[]): string {
+  const ts = new Date().toLocaleString();
+  const total = requests.length;
+  const done = requests.filter(r => r.state && r.state !== 'running').length;
+  const ok = requests.filter(r => r.ok).length;
+  const err = requests.filter(r => r.state && !r.ok && r.state !== 'running').length;
+  const notRun = total - done;
+
+  const esc = (s: unknown): string => String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  const fmtBody = (raw: string | null | undefined, ct?: string): string => {
+    if (!raw) return '';
+    if (ct?.includes('json')) { try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { /* ignore */ } }
+    return raw.length > 10000 ? raw.slice(0, 10000) + '\n\u2026(truncated)' : raw;
+  };
+
+  const METHOD_COLOR: Record<string, string> = { GET: '#58a6ff', POST: '#3fb950', PUT: '#d29922', DELETE: '#f85149', PATCH: '#bc8cff' };
+  const METHOD_BG: Record<string, string> = { GET: '#0d419d', POST: '#14532d', PUT: '#78350f', DELETE: '#7f1d1d', PATCH: '#4c1d95' };
+
+  const cards = requests.map(r => {
+    const fg = METHOD_COLOR[r.method] || '#8b949e';
+    const bg = METHOD_BG[r.method] || '#21262d';
+    const ran = r.state && r.state !== 'running';
+    const sc = r.status;
+    const scCls = !sc ? 'net' : sc < 300 ? 's2xx' : sc < 400 ? 's3xx' : sc < 500 ? 's4xx' : 's5xx';
+
+    const reqHdrs = Object.entries(r.resolvedHeaders || {}).map(([k, v]) => `${k}: ${v}`).join('\n') || '(none)';
+
+    const responseSection = !ran ? '' : (() => {
+      const resHdrs = Object.entries(r.resHeaders || {}).map(([k, v]) => `${k}: ${v}`).join('\n') || '(none)';
+      const body = sc === 0 ? (r.statusText || 'Network Error') : fmtBody(r.resBody, r.resHeaders?.['content-type']);
+      return `<details open><summary>Response</summary><div class="db">
+        <div class="kv"><span class="k">Status</span>
+          <span class="v ${scCls}">${sc === 0 ? 'Network Error' : `${sc} ${esc(r.statusText)}`}</span></div>
+        ${sc && sc > 0 ? `<div class="kv"><span class="k">Time</span><span class="v">${r.time}ms</span></div>` : ''}
+        <div class="sl">Headers</div><pre class="code">${esc(resHdrs)}</pre>
+        ${body ? `<div class="sl">Body</div><pre class="code">${esc(body)}</pre>` : ''}
+      </div></details>`;
+    })();
+
+    const assertSection = !r.assertResults?.length ? '' : (() => {
+      const pass = r.assertResults.filter(a => a.pass).length;
+      return `<details open><summary>Assertions <span class="${pass === r.assertResults.length ? 'ok' : 'err'}">${pass}/${r.assertResults.length}</span></summary>
+        <div class="db">${r.assertResults.map(a => `
+          <div class="ar">
+            <span class="ai ${a.pass ? 'ok' : 'err'}">${a.pass ? '\u2713' : '\u2717'}</span>
+            <span class="ae">${esc(a.expr)}</span>
+            ${!a.pass ? `<span class="ag">got: <code>${esc(String(a.actual ?? 'undefined'))}</code></span>` : ''}
+          </div>`).join('')}
+        </div></details>`;
+    })();
+
+    const cardCls = !ran ? '' : r.ok ? 'ok' : 'err';
+    const statusLabel = !ran
+      ? '<span class="nr">not run</span>'
+      : `<span class="sb ${r.ok ? 'ok' : 'err'}">${sc && sc > 0 ? `${sc} ${esc(r.statusText)}` : 'ERR'} \u00B7 ${r.time}ms</span>`;
+
+    return `<div class="card ${cardCls}">
+      <div class="ch">
+        <span class="badge" style="background:${bg}22;color:${fg}">${esc(r.method)}</span>
+        ${r.name ? `<span class="rn">${esc(r.name)}</span>` : ''}
+        <span class="ru" title="${esc(r.resolvedUrl)}">${esc(r.resolvedUrl)}</span>
+        ${statusLabel}
+      </div>
+      <details><summary>Request</summary><div class="db">
+        <div class="kv"><span class="k">URL</span><span class="v mono">${esc(r.resolvedUrl)}</span></div>
+        <div class="sl">Headers</div><pre class="code">${esc(reqHdrs)}</pre>
+        ${r.resolvedBody ? `<div class="sl">Body</div><pre class="code">${esc(r.resolvedBody)}</pre>` : ''}
+      </div></details>
+      ${responseSection}
+      ${assertSection}
+    </div>`;
+  }).join('');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>httpOwl Report</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;color:#e6edf3;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:13px;min-height:100vh}
+.rh{background:#161b22;border-bottom:1px solid #30363d;padding:16px 24px;display:flex;align-items:baseline;gap:16px}
+.rt{font-size:18px;font-weight:600}
+.rts{color:#8b949e;font-size:12px}
+.sum{display:flex;gap:20px;padding:10px 24px;border-bottom:1px solid #21262d;font-size:12px;color:#8b949e}
+.sum .ok{color:#3fb950}.sum .err{color:#f85149}
+.main{padding:20px 24px;max-width:960px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden}
+.card.ok{border-color:rgba(63,185,80,.4)}.card.err{border-color:rgba(248,81,73,.4)}
+.ch{display:flex;align-items:center;gap:8px;padding:10px 14px;background:#0d1117;flex-wrap:wrap}
+.badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;font-family:monospace;letter-spacing:.05em;flex-shrink:0}
+.rn{color:#8b949e;font-size:11.5px;flex-shrink:0}
+.ru{font-family:'Cascadia Code',Consolas,monospace;font-size:12px;color:#e6edf3;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.sb{font-size:11px;font-family:monospace;flex-shrink:0}
+.sb.ok{color:#3fb950}.sb.err{color:#f85149}
+.nr{font-size:11px;color:#6b7280;flex-shrink:0;font-style:italic}
+details{border-top:1px solid #21262d}
+details>summary{padding:8px 14px;font-size:11px;font-weight:600;color:#8b949e;cursor:pointer;letter-spacing:.07em;text-transform:uppercase;user-select:none;list-style:none;display:flex;align-items:center;gap:8px}
+details>summary::-webkit-details-marker{display:none}
+details>summary::before{content:'\\25B6';font-size:8px;transition:transform .15s}
+details[open]>summary::before{transform:rotate(90deg)}
+details[open]>summary{color:#c9d1d9}
+.db{padding:10px 14px 14px;display:flex;flex-direction:column;gap:8px}
+.kv{display:grid;grid-template-columns:90px 1fr;gap:6px}
+.k{color:#8b949e;font-size:12px}.v{font-size:12px;word-break:break-all}
+.v.mono{font-family:'Cascadia Code',Consolas,monospace}
+.sl{font-size:10.5px;color:#6b7280;font-weight:500;margin-top:2px}
+.s2xx{color:#3fb950}.s3xx{color:#58a6ff}.s4xx{color:#d29922}.s5xx{color:#f85149}.net{color:#8b949e}
+.ok{color:#3fb950}.err{color:#f85149}
+pre.code{background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:8px 10px;font-family:'Cascadia Code','Fira Code',Consolas,monospace;font-size:11px;color:#e6edf3;white-space:pre-wrap;word-break:break-all;max-height:320px;overflow-y:auto;line-height:1.55}
+.ar{display:flex;align-items:baseline;gap:8px;padding:4px 0;border-bottom:1px solid #21262d;font-size:12px}
+.ar:last-child{border-bottom:none}
+.ai{font-weight:700;font-size:12px;flex-shrink:0}.ai.ok{color:#3fb950}.ai.err{color:#f85149}
+.ae{font-family:monospace;font-size:11px;color:#c9d1d9}
+.ag{font-size:10.5px;color:#8b949e;margin-left:auto}
+.ag code{color:#f85149;background:#21262d;padding:1px 4px;border-radius:3px;font-size:10px}
+</style>
+</head>
+<body>
+<div class="rh"><span class="rt">httpOwl Report</span><span class="rts">${esc(ts)}</span></div>
+<div class="sum">
+  <span>${total} request${total !== 1 ? 's' : ''}</span>
+  ${ok > 0 ? `<span class="ok">\u2713 ${ok} passed</span>` : ''}
+  ${err > 0 ? `<span class="err">\u2717 ${err} failed</span>` : ''}
+  ${notRun > 0 ? `<span>${notRun} not run</span>` : ''}
+</div>
+<div class="main">${cards}</div>
+</body>
+</html>`;
 }
 
 // ── Variables Tab ──────────────────────────────────────────────────────
